@@ -47,7 +47,7 @@ RUN if [ -n "$EXTRAS" ]; then \
 #
 # A) Make the cache directory persistent via an anonymous volume.
 #    Note: This only persists for a single, named container. This is 
-#          only for convenience at de/test stage. 
+#          only for convenience at de/bin stage.
 #          For prod, it is better to use a named volume via host mount/k8s.
 VOLUME ["/root/.cache/huggingface/hub"]
 

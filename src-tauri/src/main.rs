@@ -2,8 +2,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use crate::config::{config_get, config_update};
-use crate::server::serve;
+use crate::server::transcribe;
 
+mod audio;
 mod common;
 mod config;
 mod server;
@@ -12,7 +13,11 @@ mod server;
 async fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![serve, config_get, config_update])
+        .invoke_handler(tauri::generate_handler![
+            transcribe,
+            config_get,
+            config_update
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

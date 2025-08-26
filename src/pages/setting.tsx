@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { useState } from "react";
 
@@ -42,8 +43,11 @@ export default function Settings() {
             alwaysOnTop: true
         })
 
-
         setOpen(true)
+    }
+
+    async function transcribe() {
+        await invoke('transcribe')
     }
 
     return (
@@ -77,6 +81,12 @@ export default function Settings() {
                         <h3 className="text-lg font-semibold mb-2">字幕</h3>
                         <button onClick={() => toggleCaption()} className="bg-blue-500 text-white px-2 py-2 rounded-md">
                             {open ? "关闭" : "打开"}
+                        </button>
+                    </section>
+                    <section>
+                        <h3 className="text-lg font-semibold mb-2">转录</h3>
+                        <button onClick={() => transcribe()} className="bg-blue-500 text-white px-2 py-2 rounded-md">
+                            转录
                         </button>
                     </section>
                 </div>
