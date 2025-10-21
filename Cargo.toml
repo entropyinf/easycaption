@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "backend",
+    "enthalpy"
+]
+resolver = "2"
+
+[profile.release]
+
