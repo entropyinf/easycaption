@@ -53,12 +53,4 @@ impl CTCLoss {
             candle_nn::ops::log_softmax(hs_pad, 2)
         }
     }
-
-    pub fn softmax(&self, hs_pad: &Tensor) -> Result<Tensor> {
-        if let Some(ctc_lo) = &self.ctc_lo {
-            candle_nn::ops::softmax(&ctc_lo.forward(hs_pad)?, 2)
-        } else {
-            candle_nn::ops::softmax(hs_pad, 2)
-        }
-    }
 }

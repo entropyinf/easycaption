@@ -3,7 +3,6 @@ use candle_core::Tensor;
 use candle_nn::{
     Conv1d, Conv1dConfig, Dropout, Linear, Module, VarBuilder, conv1d_no_bias, linear,
 };
-use std::time::Instant;
 
 #[derive(Debug)]
 pub struct MultiHeadedAttentionSANM {
@@ -153,21 +152,15 @@ impl MultiHeadedAttentionSANM {
         &self,
         x: &Tensor,
     ) -> Res<Tensor> {
-        let start = Instant::now();
         let (q_h, k_h, v_h, v) = self.forward_qkv(x)?;
-        println!("forward qkv cost: {:?}", start.elapsed());
 
-        let start = Instant::now();
         let fsmn_memory = self.forward_fsmn(&v)?;
-        println!("forward fsmn cost: {:?}", start.elapsed());
 
         // Scale query
         let scale = (self.d_k as f32).powf(-0.5);
         let scale_tensor = Tensor::new(scale, q_h.device())?;
 
-        let start = Instant::now();
         let q_h = q_h.broadcast_mul(&scale_tensor)?;
-        println!("broadcast_mul cost: {:?}", start.elapsed());
 
         let mut k_h = k_h.transpose(2, 3)?;
 
@@ -175,13 +168,9 @@ impl MultiHeadedAttentionSANM {
             k_h = k_h.contiguous()?;
         }
 
-        let start = Instant::now();
         let scores = q_h.matmul(&k_h)?;
-        println!("scores cost: {:?}", start.elapsed());
 
-        let start = Instant::now();
         let att_outs = self.forward_attention(&v_h, &scores)?;
-        println!("forward_attention cost: {:?}", start.elapsed());
 
         Ok((att_outs + fsmn_memory)?)
     }

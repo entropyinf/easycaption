@@ -1,47 +1,65 @@
 use crate::Res;
 use std::collections::VecDeque;
-use std::time;
-use std::time::Instant;
-use time::Duration;
 use voice_activity_detector::{IteratorExt, VoiceActivityDetector};
 
+/// Number of samples processed in each chunk
 const CHUNK_SIZE: usize = 512;
 
-#[derive(Debug, Clone, Copy)]
+/// Configuration parameters for Voice Activity Detection
+#[derive(Debug, Clone)]
 pub struct VadConfig {
-    pub sample_rate: u32,         // Sample rate, e.g., 16000 Hz
-    pub silence_duration_ms: u32, // Silence duration (milliseconds), e.g., 500 ms
+    /// Sample rate in Hz (e.g., 16000)
+    pub sample_rate: u32,
+    /// Threshold for speech detection, values above this are considered voice activity
     pub speech_threshold: f32,
-    pub window_ms: u32,
-    pub interval_ms: u64,
+    /// Maximum silence duration in milliseconds, exceeding this ends a speech segment
+    pub silence_max_ms: u32,
+    /// Minimum speech duration in milliseconds, segments shorter than this are ignored
+    pub speech_min_ms: u32,
+    /// Average speech duration in milliseconds, used to dynamically adjust silence detection parameters
+    pub speech_avg_ms: u32,
+    /// Factor to adjust silence detection sensitivity after long speech segments
+    pub silence_attenuation_factor: f32,
 }
 
 impl Default for VadConfig {
     fn default() -> Self {
         Self {
             sample_rate: 16000,
-            silence_duration_ms: 450,
             speech_threshold: 0.5,
-            window_ms: 10000,
-            interval_ms: 1000,
+            silence_max_ms: 400,
+            speech_min_ms: 2000,
+            speech_avg_ms: 5000,
+            silence_attenuation_factor: 8.0,
         }
     }
 }
 
+/// Processes audio data to detect voice activity and segment speech
 #[derive(Debug)]
 pub struct VadProcessor {
+    /// Voice activity detector instance
     vad: VoiceActivityDetector,
+    /// VAD configuration parameters
     config: VadConfig,
+    /// Total number of processed audio chunks
+    chunk_total: u32,
+    /// Time length of each audio chunk in milliseconds
     chunk_ms: u32,
-
-    last_process: Instant,
-
-    cache: VecDeque<f32>,
-    chunks: VecDeque<Chunk>,
-
-    epoch: Option<Instant>,
-    chunks_count: usize,
+    /// Maximum number of silence chunks allowed
+    silence_max_count: u32,
+    /// Minimum number of speech chunks required
+    speech_min_count: u32,
+    /// Average number of speech chunks for parameter adjustment
+    speech_avg_count: u32,
+    /// Buffer for storing incoming audio data
+    buffer: VecDeque<f32>,
+    /// Stores currently detected speech samples
+    samples: VecDeque<f32>,
+    /// Current processing state (silence or speech)
+    status: Status,
 }
+
 
 impl VadProcessor {
     pub fn new(config: VadConfig) -> Res<Self> {
@@ -51,131 +69,119 @@ impl VadProcessor {
             .build()?;
 
         let chunk_ms = ((CHUNK_SIZE as f32 / config.sample_rate as f32) * 1000.0) as u32;
-        let chunks_capacity = (config.window_ms as f32 / chunk_ms as f32 * 2.0).ceil() as usize;
 
         Ok(Self {
             vad,
-            config,
+            chunk_total: 0,
             chunk_ms,
-            cache: VecDeque::with_capacity(CHUNK_SIZE * 2),
-            last_process: Instant::now(),
-            epoch: None,
-            chunks: VecDeque::with_capacity(chunks_capacity),
-            chunks_count: 0,
+            silence_max_count: config.silence_max_ms / chunk_ms,
+            speech_min_count: config.speech_min_ms / chunk_ms,
+            speech_avg_count: config.speech_avg_ms / chunk_ms,
+            buffer: VecDeque::with_capacity(CHUNK_SIZE * 2),
+            samples: VecDeque::with_capacity(CHUNK_SIZE * 1024),
+            status: Status::Silence,
+            config,
         })
     }
 
-    pub fn process(&mut self, samples: &[f32]) -> Option<Segment> {
-        let now = Instant::now();
-
-        if self.epoch.is_none() {
-            self.epoch = Some(now);
-        }
-
-        // Merge samples and chunks
-        self.cache.extend(samples);
-        let len = self.cache.len();
-        let chunk_count = len / CHUNK_SIZE * CHUNK_SIZE;
+    pub fn process(&mut self, samples: &[f32]) -> Vec<Segment> {
+        // Buffer
+        self.buffer.extend(samples);
+        let len = self.buffer.len();
+        let chunk_count = len / CHUNK_SIZE;
         if chunk_count == 0 {
-            return None;
+            return Vec::with_capacity(0);
         }
-        let samples = self.cache.drain(0..chunk_count);
+        let chunk_size = chunk_count * CHUNK_SIZE;
+
+        let mut segments = Vec::new();
 
         // VAD
-        for (data, pred) in samples.predict(&mut self.vad) {
-            self.chunks.push_back(Chunk {
-                index: self.chunks_count,
-                data,
-                pred,
-            });
-            self.chunks_count += 1;
-        }
-        if self.chunks.is_empty() {
-            return None;
-        }
+        for (data, pred) in self.buffer.drain(0..chunk_size).predict(&mut self.vad) {
+            let speech = pred > self.config.speech_threshold;
 
-        // Sleep
-        if now - self.last_process < Duration::from_millis(self.config.interval_ms) {
-            return None;
-        }
-        self.last_process = now;
+            match self.status {
+                Status::Silence => {
+                    if speech {
+                        self.status = Status::Speech {
+                            start: self.chunk_total * self.chunk_ms,
+                            speech_count: 1,
+                            silence_count: 0,
+                        };
+                        self.samples.extend(data);
+                    } else {
+                        let len = self.samples.len();
+                        if len < (self.silence_max_count * CHUNK_SIZE as u32 / 2) as usize {
+                            self.samples.extend(data);
+                        };
+                    }
+                }
+                Status::Speech {
+                    start,
+                    speech_count,
+                    silence_count,
+                } => {
+                    self.samples.extend(data);
 
-        // Extract output
-        let mut data: Vec<f32> = Vec::with_capacity(self.chunks.len() * CHUNK_SIZE);
-        let start = self.chunks.get(0)?.index * self.chunk_ms as usize;
-        let end = self.chunks.get(self.chunks.len() - 1)?.index * self.chunk_ms as usize;
-        let speech = self
-            .chunks
-            .iter()
-            .any(|chunk| chunk.pred >= self.config.speech_threshold);
-        if !speech {
-            self.chunks.clear();
-            return Some(Segment {
-                start,
-                end,
-                data: None,
-            });
-        }
-        for chunk in &self.chunks {
-            data.extend(&chunk.data)
-        }
+                    self.status = match speech {
+                        true => Status::Speech {
+                            start,
+                            speech_count: speech_count + 1,
+                            silence_count: 0,
+                        },
+                        false => Status::Speech {
+                            start,
+                            speech_count: speech_count + 1,
+                            silence_count: silence_count + 1,
+                        },
+                    };
 
-        // Slide window to the biggest silence area
-        let chunks_ms = end - start;
-        if chunks_ms > self.config.window_ms as usize {
-            self.slide_to_silence_area();
-        }
+                    if speech_count >= self.speech_min_count {
+                        let mut silence_max_count = self.silence_max_count;
+                        if speech_count > self.speech_avg_count {
+                            silence_max_count = (silence_max_count as f32 / speech_count as f32
+                                * self.speech_avg_count as f32
+                                / self.config.silence_attenuation_factor)
+                                as u32;
+                        }
 
-        Some(Segment {
-            start,
-            end,
-            data: Some(data),
-        })
-    }
-
-    fn slide_to_silence_area(&mut self) {
-        if self.chunks.is_empty() {
-            return;
-        }
-
-        let kernel_size =
-            (self.config.silence_duration_ms as f32 / self.chunk_ms as f32).ceil() as usize;
-        if kernel_size >= self.chunks.len() {
-            return;
-        }
-
-        let mut min_avg_pred = f32::MAX;
-        let mut min_index = 0;
-
-        for i in 0..=(self.chunks.len() - kernel_size) {
-            let sum: f32 = self
-                .chunks
-                .range(i..(i + kernel_size))
-                .map(|chunk| chunk.pred)
-                .sum();
-            let avg = sum / kernel_size as f32;
-
-            if avg < min_avg_pred {
-                min_avg_pred = avg;
-                min_index = i + kernel_size;
+                        if silence_count >= silence_max_count {
+                            self.status = Status::Silence;
+                            let len = self.samples.len();
+                            let end_idx = len - (silence_max_count as usize * CHUNK_SIZE / 2);
+                            segments.push(Segment {
+                                start,
+                                end: start + speech_count * self.chunk_ms,
+                                data: self.samples.drain(0..end_idx).collect(),
+                            })
+                        }
+                    }
+                }
             }
+
+            self.chunk_total += 1;
         }
 
-        if min_index > 0 {
-            self.chunks.drain(0..min_index);
-        }
+        segments
     }
-}
 
-pub struct Segment {
-    pub start: usize,
-    pub end: usize,
-    pub data: Option<Vec<f32>>,
+    pub fn samples(&self) -> &VecDeque<f32> {
+        &self.samples
+    }
 }
 
 #[derive(Debug)]
-struct Chunk {
-    index: usize,
-    data: Vec<f32>,
-    pred: f32,
+enum Status {
+    Silence,
+    Speech {
+        start: u32,
+        speech_count: u32,
+        silence_count: u32,
+    },
+}
+
+pub struct Segment {
+    pub start: u32,
+    pub end: u32,
+    pub data: Vec<f32>,
 }

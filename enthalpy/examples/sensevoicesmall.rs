@@ -1,5 +1,4 @@
-use candle_core::{DType, Device};
-use candle_nn::VarBuilder;
+use candle_core::Device;
 use enthalpy::Res;
 use enthalpy::audio::input::AudioInput;
 use enthalpy::audio::load_data;
@@ -7,9 +6,7 @@ use enthalpy::audio::resample::Resampler;
 use enthalpy::audio::silero_vad::{VadConfig, VadProcessor};
 use enthalpy::sense_voice_small::{SenseVoiceSmall, SenseVoiceSmallConfig};
 use std::path::Path;
-use std::process::Command;
-use std::time::Instant;
-use tracing::{Level, event};
+use tracing::Level;
 
 fn main() -> Res<()> {
     tracing_subscriber::fmt()
@@ -18,48 +15,8 @@ fn main() -> Res<()> {
         .compact()
         .init();
 
-    ctc()?;
-
-    Ok(())
-}
-
-fn ctc() -> Res<()> {
-    let mut cmd = Command::new("pwd");
-    let output = cmd.output()?;
-    let pwd = String::from_utf8(output.stdout)?;
-    println!("pwd: {}", pwd);
-
-    // let device = Device::new_metal(0)?;
-    let device = Device::Cpu;
-
-    let model_path = Path::new("/Users/entropy/.cache/modelscope/hub/models/iic/SenseVoiceSmall");
-
-    let cfg = SenseVoiceSmallConfig {
-        cmvn_file: Box::new(model_path.join("am.mvn")),
-        weight_file: Box::new(model_path.join("model.pt")),
-        tokens_file: Box::new(model_path.join("tokens.json")),
-    };
-
-    let model = SenseVoiceSmall::new(cfg, &device)?;
-    let vb = unsafe {
-        VarBuilder::from_mmaped_safetensors(
-            &["/Users/entropy/workspace/easycaption/enthalpy/encoder_out.safetensor"],
-            DType::F32,
-            &device,
-        )?
-    };
-    let encoder_out = vb.get((1, 124, 512), "encoder_out")?;
-    println!("encoder_out: {:?}", encoder_out);
-    let out = model.decode(&encoder_out)?;
-
-    for item in out.iter() {
-        println!(
-            "[{}s,{}s]:{}",
-            item.timestamp.0 as f32 / 1000.0,
-            item.timestamp.1 as f32 / 1000.0,
-            item.text
-        );
-    }
+    // transpose_file()?;
+    transpose_stream()?;
 
     Ok(())
 }
@@ -78,24 +35,24 @@ fn transpose_file() -> Res<()> {
 
     let model = SenseVoiceSmall::new(cfg, &device)?;
 
-    let mp3 = "/Users/entropy/Documents/NCE1-英音-(MP3+LRC)/001&002－Excuse Me.mp3";
+    let mp3 = "/Users/entropy/Documents/NCE1-英音-(MP3+LRC)/005&006－Nice to Meet You..mp3";
     let mut data = load_data(mp3)?;
 
-    let start = Instant::now();
-    let features = model.frontend(&mut data)?;
-    let encoder_out = model.encode(&features)?;
-    let out = model.decode(&encoder_out)?;
-    let cost = start.elapsed();
+    let mut vad = VadProcessor::new(VadConfig::default())?;
+    for mut seg in vad.process(&mut data) {
+        let features = model.frontend(&mut seg.data)?;
+        let encoder_out = model.encode(&features)?;
+        let out = model.decode(&encoder_out)?;
 
-    println!("cost: {:?}", cost);
-
-    for item in out.iter() {
-        println!(
-            "[{}s,{}s]:{}",
-            item.timestamp.0 as f32 / 1000.0,
-            item.timestamp.1 as f32 / 1000.0,
-            item.text
+        print!(
+            "[{:.1}s,{:.1}s]:",
+            seg.start as f32 / 1000.0,
+            seg.end as f32 / 1000.0
         );
+        for item in out.iter() {
+            print!("{}", item.text);
+        }
+        println!();
     }
 
     Ok(())
@@ -119,34 +76,21 @@ fn transpose_stream() -> Res<()> {
 
     let resampler = Resampler::new(48000, 16000)?;
 
-    let mic = AudioInput::new()?;
+    let mic = AudioInput::from_screen_capture_kit()?;
 
-    while let Ok(chunk) = mic.rec.recv() {
+    while let Ok(chunk) = mic.rx.recv() {
         let resampled_chunk = resampler.apply_resample(&chunk)?;
-        let segment = vad.process(&resampled_chunk);
+        let segments = vad.process(&resampled_chunk);
 
-        if let Some(seg) = segment {
-            let out = match seg.data {
-                None => Vec::with_capacity(0),
-                Some(mut data) => {
-                    event!(Level::TRACE, "in frontend");
-                    let features = model.frontend(&mut data)?;
-
-                    event!(Level::TRACE, "encoding");
-                    let encoder_out = model.encode(&features)?;
-
-                    event!(Level::TRACE, "decoding");
-                    let o = model.decode(&encoder_out)?;
-
-                    event!(Level::TRACE, "decoded");
-                    o
-                }
-            };
+        for mut seg in segments {
+            let features = model.frontend(&mut seg.data)?;
+            let encoder_out = model.encode(&features)?;
+            let out = model.decode(&encoder_out)?;
 
             print!(
-                "[{}s,{}s]:",
-                seg.start as f32 / 1000f32,
-                seg.end as f32 / 1000f32
+                "[{:.1}s,{:.1}s]:",
+                seg.start as f32 / 1000.0,
+                seg.end as f32 / 1000.0
             );
             for item in out.iter() {
                 print!("{}", item.text);

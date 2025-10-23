@@ -201,7 +201,7 @@ impl Encoder {
         xs_pad = self.after_norm.forward(&xs_pad)?;
 
         // Calculate output lengths
-        let olens = masks
+        let o_lens = masks
             .squeeze(1)?
             .sum_keepdim(1)?
             .to_dtype(candle_core::DType::I64)?;
@@ -214,7 +214,7 @@ impl Encoder {
         // Apply normalization after TP encoders
         xs_pad = self.tp_norm.forward(&xs_pad)?;
 
-        Ok((xs_pad, olens))
+        Ok((xs_pad, o_lens))
     }
 }
 
