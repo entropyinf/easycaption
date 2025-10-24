@@ -3,9 +3,10 @@ use anyhow::Error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, HostId, Stream};
 use std::sync::mpsc::Receiver;
+use std::sync::Arc;
 
 pub struct AudioInput {
-    _stream: Stream,
+    _stream: Arc<Stream>,
     pub rx: Receiver<Vec<f32>>,
 }
 
@@ -70,7 +71,7 @@ impl TryFrom<Device> for AudioInput {
         let config = device.default_input_config()?;
         let channel_count = config.channels() as usize;
         let (tx, rx) = std::sync::mpsc::channel();
-        let _stream = device.build_input_stream(
+        let stream = device.build_input_stream(
             &config.config(),
             move |pcm: &[f32], _: &cpal::InputCallbackInfo| {
                 let pcm = pcm
@@ -91,9 +92,12 @@ impl TryFrom<Device> for AudioInput {
             None,
         )?;
 
-        _stream.play()?;
+        stream.play()?;
 
-        let out = AudioInput { _stream, rx };
+        let out = AudioInput {
+            _stream: Arc::new(stream),
+            rx,
+        };
 
         Ok(out)
     }

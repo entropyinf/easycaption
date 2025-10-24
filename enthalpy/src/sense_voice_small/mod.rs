@@ -1,24 +1,29 @@
 use crate::Res;
+use crate::audio::resample::Resampler;
+use crate::audio::silero_vad::{VadConfig, VadProcessor};
 use crate::audio::{WavFrontend, WavFrontendConfig};
 use anyhow::Error;
 use candle_core::{DType, Device, Module, Tensor, Var};
 use candle_nn::{Embedding, VarBuilder, VarMap};
-use decoder::{DecodeResult, Decoder};
+use decoder::{Decoder, Token};
 use encoder::{Encoder, EncoderConfig};
-use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod decoder;
 mod encoder;
 
 pub struct SenseVoiceSmallConfig {
-    pub cmvn_file: Box<dyn AsRef<Path>>,
-    pub weight_file: Box<dyn AsRef<Path>>,
-    pub tokens_file: Box<dyn AsRef<Path>>,
+    pub cmvn_file: PathBuf,
+    pub weight_file: PathBuf,
+    pub tokens_file: PathBuf,
+    pub vad: Option<VadConfig>,
+    pub resample: Option<(i32, i32)>,
 }
 
 pub struct SenseVoiceSmall {
     device: Device,
+    resampler: Option<Resampler>,
+    vad: Option<VadProcessor>,
     embed: Embedding,
     frontend: WavFrontend,
     encoder: Encoder,
@@ -34,16 +39,17 @@ impl SenseVoiceSmall {
         let textnorm_dict_len = 2;
         let embedding_dim = 560;
         let num_embeddings = 7 + lid_dict_len + textnorm_dict_len;
-        let weight = Tensor::randn::<_, f32>(0.0, 1.0, (num_embeddings, embedding_dim), &Device::Cpu)?;
+        let weight =
+            Tensor::randn::<_, f32>(0.0, 1.0, (num_embeddings, embedding_dim), &Device::Cpu)?;
         let embed = Embedding::new(weight, embedding_dim);
 
-        // audio
+        // audio frontend
         let frontend = WavFrontend::new(WavFrontendConfig {
             cmvn_file: Some(cfg.cmvn_file),
             ..WavFrontendConfig::default()
         })?;
 
-        let vb = load_model(cfg.weight_file.deref(), &device)?;
+        let vb = load_model(&cfg.weight_file, &device)?;
 
         // encoder
         let encoder = Encoder::new_with_config(
@@ -65,10 +71,24 @@ impl SenseVoiceSmall {
         )?;
 
         // decoder
-        let decoder = Decoder::new(cfg.tokens_file.deref(), vb)?;
+        let decoder = Decoder::new(&cfg.tokens_file, vb)?;
+
+        // vad
+        let vad = match cfg.vad {
+            Some(cfg) if cfg.enable => Some(VadProcessor::new(cfg)?),
+            _ => None,
+        };
+
+        // resample
+        let resampler = match cfg.resample {
+            Some((from, to)) => Some(Resampler::new(from, to)?),
+            None => None,
+        };
 
         Ok(Self {
             device,
+            resampler,
+            vad,
             embed,
             frontend,
             encoder,
@@ -76,7 +96,60 @@ impl SenseVoiceSmall {
         })
     }
 
-    pub fn encode(&self, x: &Tensor) -> Res<Tensor> {
+    pub fn update(&mut self, cfg: SenseVoiceSmallConfig) -> Res<()>{
+
+        Ok(())
+    }
+
+    pub fn transpose(&mut self, waveform: &mut [f32]) -> Res<Vec<Token>> {
+        let waveform = match &self.resampler {
+            None => waveform,
+            Some(sampler) => &mut sampler.apply_resample(&waveform)?,
+        };
+
+        let out = match &mut self.vad {
+            None => {
+                let mut out = Vec::with_capacity(1);
+                let text = self.process(waveform)?;
+                out.push(Token {
+                    text,
+                    start: 0,
+                    end: 0,
+                });
+                out
+            }
+            Some(vad) => {
+                let segments = vad.process(&waveform);
+
+                let mut out = Vec::with_capacity(segments.len());
+                for mut seg in segments {
+                    let text = self.process(&mut seg.data)?;
+                    out.push(Token {
+                        text,
+                        start: seg.start,
+                        end: seg.end,
+                    });
+                }
+                out
+            }
+        };
+
+        Ok(out)
+    }
+    fn process(&mut self, waveform: &mut [f32]) -> Res<String> {
+        let mut text = String::with_capacity(1024);
+        let features = self.frontend(waveform)?;
+        let encoder_out = self.encode(&features)?;
+        let out = self.decode(&encoder_out)?;
+
+        for item in out.iter() {
+            text += &item.text;
+        }
+
+        Ok(text)
+    }
+
+    fn encode(&self, x: &Tensor) -> Res<Tensor> {
         let (_, len, _) = x.dims3()?;
         let len = &Tensor::new(&[len as f32], &self.device)?;
         let (encoder_out, _) = self.encoder.forward(&x, len)?;
@@ -84,15 +157,15 @@ impl SenseVoiceSmall {
         Ok(encoder_out)
     }
 
-    pub fn decode(&self, encode_out: &Tensor) -> Res<Vec<DecodeResult>> {
+    fn decode(&self, encode_out: &Tensor) -> Res<Vec<Token>> {
         self.decoder.decode(encode_out)
     }
 
-    pub fn embed(&self, x: &Tensor) -> Res<Tensor> {
+    fn embed(&self, x: &Tensor) -> Res<Tensor> {
         Ok(self.embed.forward(&x)?)
     }
 
-    pub fn frontend(&self, waveform: &mut [f32]) -> Res<Tensor> {
+    fn frontend(&self, waveform: &mut [f32]) -> Res<Tensor> {
         let cpu = Device::Cpu;
         let speech = self
             .frontend

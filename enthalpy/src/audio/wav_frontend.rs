@@ -1,7 +1,7 @@
 use std::ffi::CStr;
 use std::fs::File;
 use std::ops::Deref;
-use std::path::Path;
+use std::path::PathBuf;
 use candle_core::{Device, Tensor};
 use kaldi_fbank_rust_kautism::{FbankOptions, FrameExtractionOptions, MelBanksOptions, OnlineFbank};
 use crate::Res;
@@ -23,7 +23,7 @@ pub struct WavFrontendConfig {
     /// Frame interval for LFR processing.
     pub lfr_n: usize,
     /// Optional path to the CMVN (cepstral mean and variance normalization) file.
-    pub cmvn_file: Option<Box<dyn AsRef<Path>>>,
+    pub cmvn_file: Option<PathBuf>,
 }
 
 /// Implementation of the `Default` trait for `WavFrontendConfig`.
@@ -175,7 +175,7 @@ impl WavFrontend {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened or if the CMVN data is malformed.
-    fn load_cmvn(path: &Box<dyn AsRef<Path>>) -> Res<(Tensor, Tensor)> {
+    fn load_cmvn(path: &PathBuf) -> Res<(Tensor, Tensor)> {
         let file = File::open(path.deref())?;
         let reader = std::io::BufReader::new(file);
         let mut lines = std::io::BufRead::lines(reader);

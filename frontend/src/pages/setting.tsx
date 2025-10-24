@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { useState } from "react";
+import React, { useState } from "react";
 
 type SidebarItem = {
     label: string;
-    icon?: React.ReactNode; // 若需要图标，可扩展为引入具体图标组件
+    icon?: React.ReactNode;
     isActive?: boolean;
 };
 
@@ -24,7 +24,7 @@ export default function Settings() {
 
         if (win != null) {
             setOpen(false)
-            win.destroy()
+            await win.destroy()
             return
         }
 
@@ -47,16 +47,14 @@ export default function Settings() {
     }
 
     async function transcribe() {
-        await invoke('transcribe')
+        await invoke<boolean>('transcribe')
     }
 
     return (
         <div className="flex h-screen bg-gray-100">
-            {/* 侧边栏 */}
             <aside className="w-64 bg-white border-r flex flex-col p-4">
                 <div className="mb-6">
-                    <h2 className="text-xl font-bold" data-tauri-drag-region>Entropy</h2>
-                    <p className="text-sm text-gray-500">Apple 账户</p>
+                    <h2 className="text-xl font-bold" data-tauri-drag-region>EasyCaption</h2>
                 </div>
                 <nav className="flex-grow">
                     <ul>
@@ -74,7 +72,7 @@ export default function Settings() {
                     </ul>
                 </nav>
             </aside>
-            {/* 右侧内容区域 */}
+            
             <main className="flex-grow p-6 overflow-auto">
                 <div className="space-y-4">
                     <section>

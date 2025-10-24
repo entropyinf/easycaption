@@ -10,9 +10,10 @@ use std::path::Path;
 mod ctc;
 
 #[derive(Debug)]
-pub struct DecodeResult {
+pub struct Token {
     pub text: String,
-    pub timestamp: (u32, u32),
+    pub start: u32,
+    pub end: u32,
 }
 
 pub struct Decoder {
@@ -29,7 +30,7 @@ impl Decoder {
         Ok(Decoder { ctc, tokens })
     }
 
-    pub fn decode(&self, encoder_out: &Tensor) -> Res<Vec<DecodeResult>> {
+    pub fn decode(&self, encoder_out: &Tensor) -> Res<Vec<Token>> {
         let ctc_logits = self.ctc.log_softmax(encoder_out)?;
 
         let ids = ctc_logits.argmax(2)?.flatten(0, 1)?.to_vec1::<u32>()?;
@@ -41,7 +42,7 @@ impl Decoder {
             .filter(|&(_, x)| x > 0)
             .collect::<Vec<(usize, u32)>>();
 
-        let mut results = Vec::<DecodeResult>::new();
+        let mut results = Vec::<Token>::new();
 
         let mut start = 0i32;
         for &(index, id) in index_ids.iter() {
@@ -58,9 +59,10 @@ impl Decoder {
                 let close = max(index * 60 - 30, 0);
                 start = index;
 
-                results.push(DecodeResult {
+                results.push(Token {
                     text,
-                    timestamp: (open as u32, close as u32),
+                    start: open as u32,
+                    end: close as u32,
                 });
             }
         }
