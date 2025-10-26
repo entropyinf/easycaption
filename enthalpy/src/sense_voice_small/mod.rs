@@ -96,11 +96,6 @@ impl SenseVoiceSmall {
         })
     }
 
-    pub fn update(&mut self, cfg: SenseVoiceSmallConfig) -> Res<()>{
-
-        Ok(())
-    }
-
     pub fn transpose(&mut self, waveform: &mut [f32]) -> Res<Vec<Token>> {
         let waveform = match &self.resampler {
             None => waveform,

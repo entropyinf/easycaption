@@ -143,9 +143,9 @@ impl VadProcessor {
                         let mut silence_max_count = self.silence_max_count;
 
                         if speech_count as f32 > self.speech_avg_count {
-                            let x = speech_count as f32 / self.speech_avg_count as f32 - 1.0;
-                            let rate = (-x * config.silence_attenuation_factor).exp();
-                            silence_max_count = silence_max_count * rate;
+                            let rate = speech_count as f32 / self.speech_avg_count - 1.0;
+                            let factor = (-rate * config.silence_attenuation_factor).exp();
+                            silence_max_count = silence_max_count * factor;
                         }
 
                         if silence_count as f32 >= silence_max_count {

@@ -1,33 +1,37 @@
 use candle_core::Device;
+use enthalpy::Res;
 use enthalpy::audio::input::AudioInput;
 use enthalpy::audio::silero_vad::VadConfig;
 use enthalpy::sense_voice_small::{SenseVoiceSmall, SenseVoiceSmallConfig};
-use enthalpy::Res;
-use std::path::Path;
+use enthalpy::util::modelscope::ModelScopeRepo;
 use tracing::Level;
 
-fn main() -> Res<()> {
+#[tokio::main]
+async fn main() -> Res<()> {
     tracing_subscriber::fmt()
         .with_max_level(Level::TRACE)
         .with_env_filter("enthalpy=TRACE")
         .compact()
         .init();
 
-    transpose_stream()?;
+    transpose_stream().await?;
 
     Ok(())
 }
 
-fn transpose_stream() -> Res<()> {
+async fn transpose_stream() -> Res<()> {
     // let device = Device::new_metal(0)?;
     let device = Device::Cpu;
 
-    let model_path = Path::new("/Users/entropy/.cache/modelscope/hub/models/iic/SenseVoiceSmall");
+    let repo = ModelScopeRepo::new(
+        "iic/SenseVoiceSmall",
+        "/Users/entropy/.cache/modelscope/hub/models/",
+    );
 
     let cfg = SenseVoiceSmallConfig {
-        cmvn_file: model_path.join("am.mvn"),
-        weight_file: model_path.join("model.pt"),
-        tokens_file: model_path.join("tokens.json"),
+        cmvn_file: repo.get("am.mvn").await?,
+        weight_file: repo.get("model.pt").await?,
+        tokens_file: repo.get("tokens.json").await?,
         vad: Some(VadConfig::default()),
         resample: Some((48000, 16000)),
     };
