@@ -90,8 +90,6 @@ impl MultiHeadedAttentionSANM {
         &self,
         inputs: &Tensor,
     ) -> Res<Tensor> {
-        let inputs = inputs.clone();
-
         // Transpose to (b, d, t)
         let x = inputs.transpose(1, 2)?;
 

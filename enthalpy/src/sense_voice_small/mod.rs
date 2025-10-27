@@ -134,30 +134,14 @@ impl SenseVoiceSmall {
     fn process(&mut self, waveform: &mut [f32]) -> Res<String> {
         let mut text = String::with_capacity(1024);
         let features = self.frontend(waveform)?;
-        let encoder_out = self.encode(&features)?;
-        let out = self.decode(&encoder_out)?;
+        let encoder_out = self.encoder.forward(&features)?;
+        let out = self.decoder.decode(&encoder_out)?;
 
         for item in out.iter() {
             text += &item.text;
         }
 
         Ok(text)
-    }
-
-    fn encode(&self, x: &Tensor) -> Res<Tensor> {
-        let (_, len, _) = x.dims3()?;
-        let len = &Tensor::new(&[len as f32], &self.device)?;
-        let (encoder_out, _) = self.encoder.forward(&x, len)?;
-
-        Ok(encoder_out)
-    }
-
-    fn decode(&self, encode_out: &Tensor) -> Res<Vec<Token>> {
-        self.decoder.decode(encode_out)
-    }
-
-    fn embed(&self, x: &Tensor) -> Res<Tensor> {
-        Ok(self.embed.forward(&x)?)
     }
 
     fn frontend(&self, waveform: &mut [f32]) -> Res<Tensor> {
@@ -170,13 +154,13 @@ impl SenseVoiceSmall {
             .unsqueeze(0)?;
 
         let language_query = Tensor::new(&[[0i64]], &cpu)?;
-        let language_query = self.embed(&language_query)?;
+        let language_query = self.embed.forward(&language_query)?;
 
         let text_norm_query = Tensor::new(&[[15i64]], &cpu)?;
-        let text_norm_query = self.embed(&text_norm_query)?;
+        let text_norm_query = self.embed.forward(&text_norm_query)?;
 
         let event_emo_query = Tensor::new(&[[1i64, 2]], &cpu)?;
-        let event_emo_query = self.embed(&event_emo_query)?;
+        let event_emo_query = self.embed.forward(&event_emo_query)?;
 
         let speech = Tensor::cat(&[&text_norm_query, &speech], 1)?;
         let input_query = Tensor::cat(&[&language_query, &event_emo_query], 1)?;

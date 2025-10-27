@@ -3,7 +3,7 @@ use crate::Res;
 use crate::sense_voice_small::encoder::{
     EncoderLayerSANM, MultiHeadedAttentionSANM, PositionwiseFeedForward, SinusoidalPositionEncoder,
 };
-use candle_core::{DType, Tensor};
+use candle_core::Tensor;
 use candle_nn::{LayerNorm, Module, VarBuilder};
 
 /// Configuration for SenseVoiceEncoderSmall
@@ -174,12 +174,7 @@ impl Encoder {
     /// # Returns
     /// * Output tensor (batch, time, size)
     /// * Output sequence lengths (batch,)
-    pub fn forward(&self, xs_pad: &Tensor, ilens: &Tensor) -> Res<(Tensor, Tensor)> {
-        // Create masks from audio lengths
-        let masks = sequence_mask(ilens, xs_pad.shape().dims()[1])?
-            .to_dtype(xs_pad.dtype())?
-            .unsqueeze(2)?;
-
+    pub fn forward(&self, xs_pad: &Tensor) -> Res<Tensor> {
         // Scale audio
         let xs_pad = (xs_pad * (self.output_size as f64).sqrt())?;
 
@@ -187,7 +182,6 @@ impl Encoder {
         let mut xs_pad = self.embed.forward(&xs_pad)?;
 
         // Forward through first encoder layers
-        let masks = masks;
         for encoder_layer in &self.encoders0 {
             xs_pad = encoder_layer.forward(&xs_pad)?;
         }
@@ -200,12 +194,6 @@ impl Encoder {
         // Apply normalization after main encoders
         xs_pad = self.after_norm.forward(&xs_pad)?;
 
-        // Calculate output lengths
-        let o_lens = masks
-            .squeeze(1)?
-            .sum_keepdim(1)?
-            .to_dtype(candle_core::DType::I64)?;
-
         // Forward through TP encoder layers
         for encoder_layer in &self.tp_encoders {
             xs_pad = encoder_layer.forward(&xs_pad)?;
@@ -214,37 +202,6 @@ impl Encoder {
         // Apply normalization after TP encoders
         xs_pad = self.tp_norm.forward(&xs_pad)?;
 
-        Ok((xs_pad, o_lens))
+        Ok(xs_pad)
     }
-}
-
-/// Create a sequence mask from lengths
-///
-/// # Arguments
-/// * `lengths` - A 1D tensor containing the length of each sequence
-/// * `max_len` - The maximum length of sequences
-///
-/// # Returns
-/// A 2D boolean tensor where each row represents a sequence,
-/// with `true` for valid positions and `false` for masked positions
-pub fn sequence_mask(lengths: &Tensor, max_len: usize) -> Res<Tensor> {
-    let device = lengths.device();
-    let batch_size = lengths.shape().dims()[0];
-
-    // Create a range tensor [0, 1, 2, ..., max_len-1]
-    let range = Tensor::arange(0u32, max_len as u32, device)?
-        .unsqueeze(0)? // Shape: [1, max_len]
-        .broadcast_as((batch_size, max_len))?; // Shape: [batch_size, max_len]
-
-    // Expand lengths to [batch_size, 1] and broadcast to [batch_size, max_len]
-    let lengths_expanded = lengths
-        .clone()
-        .to_dtype(DType::U32)?
-        .unsqueeze(1)? // Shape: [batch_size, 1]
-        .broadcast_as((batch_size, max_len))?; // Shape: [batch_size, max_len]
-
-    // Create mask by comparing range with lengths
-    let out = range.lt(&lengths_expanded)?;
-
-    Ok(out)
 }
