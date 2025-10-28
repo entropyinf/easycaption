@@ -12,7 +12,8 @@ pub struct Resampler {
 }
 
 impl Resampler {
-    pub fn new(orig_freq: i32, new_freq: i32) -> Res<Self> {
+    pub fn new(orig_freq: u32, new_freq: u32) -> Res<Self> {
+        let (orig_freq, new_freq) = (orig_freq as i32, new_freq as i32);
         let (kernels, width) =
             get_sinc_resample_kernel(orig_freq, new_freq, 16000, 6, 0.99f32, None)?;
 

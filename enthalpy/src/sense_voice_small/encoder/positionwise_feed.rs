@@ -1,8 +1,8 @@
 use crate::Res;
+use crate::var_builder::{Linear, VarBuilder};
 use candle_core::Tensor;
-use candle_nn::{linear, Dropout, Linear, Module, VarBuilder};
+use candle_nn::Dropout;
 
-#[derive(Debug)]
 pub struct PositionwiseFeedForward {
     w_1: Linear,
     w_2: Linear,
@@ -18,8 +18,8 @@ impl PositionwiseFeedForward {
     /// * `dropout_rate` - Dropout rate
     /// * `vb` - VarBuilder for creating linear layers
     pub fn new(in_dim: usize, hidden_units: usize, dropout_rate: f32, vb: VarBuilder) -> Res<Self> {
-        let w_1 = linear(in_dim, hidden_units, vb.pp("w_1"))?;
-        let w_2 = linear(hidden_units, in_dim, vb.pp("w_2"))?;
+        let w_1 = vb.pp("w_1").linear(in_dim, hidden_units)?;
+        let w_2 = vb.pp("w_2").linear(hidden_units, in_dim)?;
         let dropout = Dropout::new(dropout_rate);
 
         Ok(Self { w_1, w_2, dropout })

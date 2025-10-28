@@ -4,7 +4,8 @@ use crate::sense_voice_small::encoder::{
     EncoderLayerSANM, MultiHeadedAttentionSANM, PositionwiseFeedForward, SinusoidalPositionEncoder,
 };
 use candle_core::Tensor;
-use candle_nn::{LayerNorm, Module, VarBuilder};
+use candle_nn::{LayerNorm, Module};
+use crate::var_builder::VarBuilder;
 
 /// Configuration for SenseVoiceEncoderSmall
 #[derive(Debug, Clone)]
@@ -54,7 +55,6 @@ impl Default for EncoderConfig {
     }
 }
 
-#[derive(Debug)]
 pub struct Encoder {
     /// Embedding module
     embed: SinusoidalPositionEncoder,
@@ -151,8 +151,9 @@ impl Encoder {
         };
 
         // Create normalization layers
-        let after_norm = candle_nn::layer_norm(cfg.output_size, 1e-5, vb.pp("after_norm"))?;
-        let tp_norm = candle_nn::layer_norm(cfg.output_size, 1e-5, vb.pp("tp_norm"))?;
+        
+        let after_norm = vb.pp("after_norm").layer_norm(cfg.output_size, 1e-5)?;
+        let tp_norm = vb.pp("tp_norm").layer_norm(cfg.output_size, 1e-5)?;
 
         Ok(Self {
             embed,

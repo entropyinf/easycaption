@@ -1,10 +1,8 @@
 use crate::Res;
-use candle_core::Tensor;
-use candle_nn::{
-    Conv1d, Conv1dConfig, Dropout, Linear, Module, VarBuilder, conv1d_no_bias, linear,
-};
+use crate::var_builder::{Linear, VarBuilder};
+use candle_core::{Device, Tensor};
+use candle_nn::{Conv1d, Conv1dConfig, Dropout, Module};
 
-#[derive(Debug)]
 pub struct MultiHeadedAttentionSANM {
     /// The dimension of each head
     d_k: usize,
@@ -50,11 +48,11 @@ impl MultiHeadedAttentionSANM {
         let d_k = n_feat / n_head;
         let h = n_head;
 
-        let linear_out = linear(n_feat, n_feat, vb.pp("linear_out"))?;
-        let linear_q_k_v = linear(in_feat, n_feat * 3, vb.pp("linear_q_k_v"))?;
+        let linear_out = vb.pp("linear_out").linear(n_feat, n_feat)?;
+        let linear_q_k_v = vb.pp("linear_q_k_v").linear(in_feat, n_feat * 3)?;
 
         // FSMN block - Conv1d with groups=n_feat and no bias
-        let fsmn_block = conv1d_no_bias(
+        let fsmn_block = vb.pp("fsmn_block").conv1d_no_bias_d(
             n_feat,
             n_feat,
             kernel_size,
@@ -64,7 +62,9 @@ impl MultiHeadedAttentionSANM {
                 padding: 0,
                 ..Conv1dConfig::default()
             },
-            vb.pp("fsmn_block"),
+            
+            // Metal run slowly conv1d, so we use CPU
+            &Device::Cpu,
         )?;
 
         // Calculate padding
@@ -86,24 +86,13 @@ impl MultiHeadedAttentionSANM {
     }
 
     /// Forward pass for FSMN
-    fn forward_fsmn(
-        &self,
-        inputs: &Tensor,
-    ) -> Res<Tensor> {
-        // Transpose to (b, d, t)
+    fn forward_fsmn(&self, inputs: &Tensor) -> Res<Tensor> {
         let x = inputs.transpose(1, 2)?;
-
-        // Apply padding
         let x = x.pad_with_zeros(2, self.left_padding, self.right_padding)?;
-
-        let x = self.fsmn_block.forward(&x)?;
-
-        // Transpose back to (b, t, d)
+        let x = self.fsmn_block.forward(&x.to_device(&Device::Cpu)?)?;
+        let x = x.to_device(inputs.device())?;
         let x = x.transpose(1, 2)?;
-
-        // Add residual connection
         let x = (x + inputs)?;
-
         let x = self.dropout.forward(&x, false)?;
 
         Ok(x)
@@ -127,16 +116,9 @@ impl MultiHeadedAttentionSANM {
     }
 
     /// Compute attention context vector
-    fn forward_attention(
-        &self,
-        value: &Tensor,
-        scores: &Tensor,
-    ) -> Res<Tensor> {
+    fn forward_attention(&self, value: &Tensor, scores: &Tensor) -> Res<Tensor> {
         let attn = candle_nn::ops::softmax(&scores, 3)?;
-
-        let p_attn = attn;
-
-        let p_attn = self.dropout.forward(&p_attn, false)?;
+        let p_attn = self.dropout.forward(&attn, false)?;
         let x = p_attn.matmul(&value.contiguous()?)?; // (batch, head, time1, d_k)
         let x = x.transpose(1, 2)?.flatten_from(2)?; // (batch, time1, d_model)
 
@@ -146,10 +128,7 @@ impl MultiHeadedAttentionSANM {
     }
 
     /// Forward pass
-    pub fn forward(
-        &self,
-        x: &Tensor,
-    ) -> Res<Tensor> {
+    pub fn forward(&self, x: &Tensor) -> Res<Tensor> {
         let (q_h, k_h, v_h, v) = self.forward_qkv(x)?;
 
         let fsmn_memory = self.forward_fsmn(&v)?;

@@ -1,8 +1,7 @@
-use candle_core::{Result, Tensor};
-use candle_nn::{Linear, Module, VarBuilder};
+use crate::var_builder::{Linear, VarBuilder};
 use crate::Res;
+use candle_core::{Result, Tensor};
 
-#[derive(Debug, Clone)]
 pub struct CTCLoss {
     ctc_lo: Option<Linear>,
 }
@@ -25,20 +24,13 @@ impl CTCLoss {
         vb: VarBuilder,
     ) -> Res<Self> {
         let ctc_lo = if extra_linear {
-            Some(candle_nn::linear(
-                encoder_output_size,
-                odim,
-                vb.pp("ctc_lo"),
-            )?)
+            Some(vb.pp("ctc_lo").linear(encoder_output_size, odim)?)
         } else {
             None
         };
 
-        Ok(Self {
-            ctc_lo,
-        })
+        Ok(Self { ctc_lo })
     }
-
 
     /// Apply log_softmax to frame activations
     ///

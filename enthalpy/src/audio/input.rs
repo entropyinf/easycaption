@@ -1,12 +1,13 @@
 use crate::Res;
 use anyhow::Error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Host, HostId, Stream};
-use std::sync::mpsc::Receiver;
+use cpal::{Device, Host, HostId, Stream, SupportedStreamConfig};
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 
 pub struct AudioInput {
-    _stream: Arc<Stream>,
+    pub config: SupportedStreamConfig,
+    stream: Arc<Stream>,
     pub rx: Receiver<Vec<f32>>,
 }
 
@@ -34,6 +35,11 @@ impl AudioInput {
             .ok_or_else(|| Error::msg("No default input device"))?;
 
         Ok(Self::try_from(device)?)
+    }
+
+    pub fn record(&self) -> Res<()> {
+        self.stream.play()?;
+        Ok(())
     }
 
     pub fn host_names() -> Vec<String> {
@@ -92,10 +98,9 @@ impl TryFrom<Device> for AudioInput {
             None,
         )?;
 
-        stream.play()?;
-
         let out = AudioInput {
-            _stream: Arc::new(stream),
+            config,
+            stream: Arc::new(stream),
             rx,
         };
 

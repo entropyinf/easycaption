@@ -4,21 +4,16 @@ pub mod silero_vad;
 pub mod wav_frontend;
 
 use crate::Res;
-use resample::Resampler;
 use std::fs::File;
 use std::path::Path;
 use symphonia::core::io::MediaSourceStream;
 
 pub use wav_frontend::*;
 
-pub fn load_data(path: impl AsRef<Path>) -> Res<Vec<f32>> {
-    let (data, _sample_rate) = pcm_decode(path)?;
-    let resampler = Resampler::new(48000, 16000)?;
-    let data = resampler.apply_resample(&data)?;
-    Ok(data)
-}
 
-pub fn pcm_decode<P: AsRef<Path>>(path: P) -> Res<(Vec<f32>, u32)> {
+/// Loads an audio file and returns the PCM data and sample rate.
+/// return (pcm_data, sample_rate)
+pub fn load_audio<P: AsRef<Path>>(path: P) -> Res<(Vec<f32>, u32)> {
     use symphonia::core::audio::{AudioBufferRef, Signal};
     use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
     use symphonia::core::conv::FromSample;

@@ -1,13 +1,14 @@
-use crate::Res;
 use crate::audio::resample::Resampler;
 use crate::audio::silero_vad::{VadConfig, VadProcessor};
 use crate::audio::{WavFrontend, WavFrontendConfig};
+use crate::var_builder::VarBuilder;
+use crate::Res;
 use anyhow::Error;
-use candle_core::{DType, Device, Module, Tensor, Var};
-use candle_nn::{Embedding, VarBuilder, VarMap};
+use candle_core::{Device, Module, Tensor};
+use candle_nn::Embedding;
 use decoder::{Decoder, Token};
 use encoder::{Encoder, EncoderConfig};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 mod decoder;
 mod encoder;
@@ -17,7 +18,7 @@ pub struct SenseVoiceSmallConfig {
     pub weight_file: PathBuf,
     pub tokens_file: PathBuf,
     pub vad: Option<VadConfig>,
-    pub resample: Option<(i32, i32)>,
+    pub resample: Option<(u32, u32)>,
 }
 
 pub struct SenseVoiceSmall {
@@ -49,7 +50,7 @@ impl SenseVoiceSmall {
             ..WavFrontendConfig::default()
         })?;
 
-        let vb = load_model(&cfg.weight_file, &device)?;
+        let vb = VarBuilder::from_file(&cfg.weight_file, &device)?;
 
         // encoder
         let encoder = Encoder::new_with_config(
@@ -170,19 +171,4 @@ impl SenseVoiceSmall {
 
         Ok(speech)
     }
-}
-
-pub fn load_model(path: &dyn AsRef<Path>, device: &Device) -> Res<VarBuilder<'static>> {
-    let tensors = candle_core::pickle::read_all(path)?;
-    let vm = VarMap::new();
-
-    let mut vm_data_map = vm.data().lock().map_err(|e| Error::msg(e.to_string()))?;
-    for (name, tensor) in tensors.iter() {
-        vm_data_map.insert(
-            String::from(name),
-            Var::from_tensor(&tensor.to_device(&device)?)?,
-        );
-    }
-
-    Ok(VarBuilder::from_varmap(&vm, DType::F32, &device))
 }

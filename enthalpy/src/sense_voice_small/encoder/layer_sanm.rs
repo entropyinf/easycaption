@@ -1,9 +1,9 @@
-use crate::Res;
 use crate::sense_voice_small::encoder::{MultiHeadedAttentionSANM, PositionwiseFeedForward};
+use crate::var_builder::{Linear, VarBuilder};
+use crate::Res;
 use candle_core::Tensor;
-use candle_nn::{Dropout, LayerNorm, Linear, Module, VarBuilder};
+use candle_nn::{Dropout, LayerNorm, Module};
 
-#[derive(Debug)]
 pub struct EncoderLayerSANM {
     /// Self attention module
     self_attn: MultiHeadedAttentionSANM,
@@ -49,16 +49,13 @@ impl EncoderLayerSANM {
         concat_after: bool,
         vb: VarBuilder,
     ) -> Res<Self> {
-        let norm1 = candle_nn::layer_norm(in_size, 1e-5, vb.pp("norm1"))?;
-        let norm2 = candle_nn::layer_norm(size, 1e-5, vb.pp("norm2"))?;
+        
+        let norm1 = vb.pp("norm1").layer_norm(in_size, 1e-5)?;
+        let norm2 = vb.pp("norm2").layer_norm(size, 1e-5)?;
         let dropout = Dropout::new(dropout_rate);
 
         let concat_linear = if concat_after {
-            Some(candle_nn::linear(
-                size + size,
-                size,
-                vb.pp("concat_linear"),
-            )?)
+            Some(vb.pp("concat_linear").linear(size + size, size)?)
         } else {
             None
         };

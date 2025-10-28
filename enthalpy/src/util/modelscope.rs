@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::fs;
 use std::io::{BufWriter, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -85,35 +85,11 @@ impl ModelScopeRepo {
 
         let repo_files = self.get_repo_files().await?;
 
-        let client = reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10));
-        let client = Arc::new(client.build()?);
-
-        let mut tasks = Vec::new();
-        let bars = MultiProgress::new();
-
         if let Some(repo_file) = repo_files.into_iter().find(|f| f.name == file) {
-            let model_id = self.model_id.clone();
-            let client = client.clone();
-            let save_dir = self.save_dir.clone();
-
             let bar = ProgressBar::new(repo_file.size);
             let style = ProgressStyle::default_bar().template(BAR_STYLE)?;
             bar.set_style(style);
-
-            bars.add(bar.clone());
-
-            let task = tokio::spawn(async move {
-                let res = Self::download_file(client, model_id, repo_file, save_dir, bar).await;
-                if let Err(e) = res {
-                    bail!("Error downloading file: {}", e);
-                }
-                Ok::<(), anyhow::Error>(())
-            });
-
-            tasks.push(task);
-        }
-        for task in tasks {
-            task.await??;
+            self.download_file(repo_file, bar).await?;
         }
 
         Ok(())
@@ -140,18 +116,16 @@ impl ModelScopeRepo {
         Ok(repo_files)
     }
 
-    async fn download_file(
-        client: Arc<reqwest::Client>,
-        model_id: String,
-        repo_file: RepoFile,
-        save_dir: PathBuf,
-        bar: ProgressBar,
-    ) -> Res<()> {
+    async fn download_file(&self, repo_file: RepoFile, bar: ProgressBar) -> Res<()> {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .build()?;
+
         let path = &repo_file.path;
         let name = &repo_file.name;
 
         bar.set_message(name.clone());
-        let temp_file_path = save_dir.join(format!("{path}.downloading"));
+        let temp_file_path = self.save_dir.join(format!("{path}.downloading"));
 
         if let Some(parent) = temp_file_path.parent() {
             fs::create_dir_all(parent)?;
@@ -177,7 +151,7 @@ impl ModelScopeRepo {
         bar.set_length(repo_file.size);
 
         let url = DOWNLOAD_URL
-            .replace("<model_id>", &model_id)
+            .replace("<model_id>", &self.model_id)
             .replace("<path>", path);
 
         let mut rb = client.get(&url).header(UA.0, UA.1);
@@ -187,7 +161,7 @@ impl ModelScopeRepo {
         // But I think the probability of files having the same number of bytes is relatively low, so I won't check here. 🙊
         if existing_size == repo_file.size {
             bar.finish();
-            let file_path = save_dir.join(path);
+            let file_path = self.save_dir.join(path);
             fs::rename(&temp_file_path, &file_path)?;
             return Ok(());
         }
@@ -230,10 +204,12 @@ impl ModelScopeRepo {
 
         file.flush()?;
 
-        let file_path = save_dir.join(path);
+        let file_path = self.save_dir.join(path);
         fs::rename(&temp_file_path, &file_path)?;
         bar.finish();
 
         Ok(())
     }
 }
+
+trait ProgressView {}
