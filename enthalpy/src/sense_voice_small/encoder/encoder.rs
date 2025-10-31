@@ -8,7 +8,7 @@ use candle_nn::{LayerNorm, Module};
 use crate::var_builder::VarBuilder;
 
 /// Configuration for SenseVoiceEncoderSmall
-#[derive(Debug, Clone)]
+#[derive(PartialEq)]
 pub struct EncoderConfig {
     /// Input size
     pub input_size: usize,

@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import "./App.css";
-import Settings from "./pages/setting";
-import Caption from "./pages/caption";
+import Settings from "./pages/Setting";
+import Caption from "./pages/Caption";
 
 const routes: Record<string, ReactNode> = {
   caption: <Caption />,

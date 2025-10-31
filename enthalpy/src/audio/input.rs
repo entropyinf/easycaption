@@ -4,18 +4,19 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, HostId, Stream, SupportedStreamConfig};
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
+use serde::Serialize;
 
 pub struct AudioInput {
     pub config: SupportedStreamConfig,
     stream: Arc<Stream>,
-    pub rx: Receiver<Vec<f32>>,
+    rx: Option<Receiver<Vec<f32>>>,
 }
 
 unsafe impl Sync for AudioInput {}
 unsafe impl Send for AudioInput {}
 
 impl AudioInput {
-    pub fn with_host_device(host_name: &str, device_name: &str) -> Res<AudioInput> {
+    pub fn with_host_device(host_name: &str, device_name: &str) -> Res<Self> {
         let host = Self::host_of_name(host_name)?;
         let device = host
             .input_devices()?
@@ -23,23 +24,18 @@ impl AudioInput {
             .find(|d| d.name().unwrap_or_default() == device_name)
             .ok_or_else(|| Error::msg("Device not found"))?;
 
-        Ok(Self::try_from(device)?)
+        Ok(Self::new(device)?)
     }
 
     #[cfg(target_os = "macos")]
-    pub fn from_screen_capture_kit() -> Res<AudioInput> {
+    pub fn from_screen_capture_kit() -> Res<Self> {
         // Set up the input device and stream with the default input config.
         let host = cpal::host_from_id(HostId::ScreenCaptureKit)?;
         let device = host
             .default_input_device()
             .ok_or_else(|| Error::msg("No default input device"))?;
 
-        Ok(Self::try_from(device)?)
-    }
-
-    pub fn record(&self) -> Res<()> {
-        self.stream.play()?;
-        Ok(())
+        Ok(Self::new(device)?)
     }
 
     pub fn host_names() -> Vec<String> {
@@ -48,6 +44,19 @@ impl AudioInput {
             .map(|h| h.name())
             .map(String::from)
             .collect::<Vec<String>>()
+    }
+
+    pub fn all_inputs() -> Res<Vec<HostDevice>> {
+        let mut out = Vec::new();
+
+        for host_id in Self::host_ids() {
+            let host = Self::host_of_name(host_id.name())?;
+            for device in host.input_devices()?.into_iter() {
+                out.push(HostDevice::new(host_id.name().to_string(), device.name()?.to_string()))
+            }
+        }
+
+        Ok(out)
     }
 
     pub fn devices_of_host(host: &Host) -> Res<Vec<Device>> {
@@ -63,17 +72,7 @@ impl AudioInput {
         Ok(cpal::host_from_id(host_id)?)
     }
 
-    fn host_ids() -> Vec<HostId> {
-        cpal::available_hosts()
-            .iter()
-            .copied()
-            .collect::<Vec<HostId>>()
-    }
-}
-
-impl TryFrom<Device> for AudioInput {
-    type Error = Error;
-    fn try_from(device: Device) -> Res<Self> {
+    pub fn new(device: Device) -> Res<Self> {
         let config = device.default_input_config()?;
         let channel_count = config.channels() as usize;
         let (tx, rx) = std::sync::mpsc::channel();
@@ -101,9 +100,34 @@ impl TryFrom<Device> for AudioInput {
         let out = AudioInput {
             config,
             stream: Arc::new(stream),
-            rx,
+            rx: Some(rx),
         };
 
         Ok(out)
+    }
+
+    pub fn play(&mut self) -> Res<Receiver<Vec<f32>>> {
+        self.stream.play()?;
+        let rx = self.rx.take().ok_or(Error::msg("is playing"))?;
+        Ok(rx)
+    }
+
+    fn host_ids() -> Vec<HostId> {
+        cpal::available_hosts()
+            .iter()
+            .copied()
+            .collect::<Vec<HostId>>()
+    }
+}
+
+#[derive(Serialize)]
+pub struct HostDevice{
+    host: String,
+    device: String,
+}
+
+impl HostDevice {
+    pub fn new(host: String, device: String) -> Self {
+        Self { host, device }
     }
 }

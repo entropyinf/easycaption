@@ -1,7 +1,6 @@
 use crate::Res;
 use candle_core::{DType, Device, Tensor};
 
-#[derive(Debug)]
 pub struct SinusoidalPositionEncoder;
 
 impl SinusoidalPositionEncoder {

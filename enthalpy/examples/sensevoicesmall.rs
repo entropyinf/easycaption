@@ -1,10 +1,9 @@
-use candle_core::Device;
-use enthalpy::Res;
 use enthalpy::audio::input::AudioInput;
 use enthalpy::audio::load_audio;
 use enthalpy::audio::silero_vad::VadConfig;
 use enthalpy::sense_voice_small::{SenseVoiceSmall, SenseVoiceSmallConfig};
-use enthalpy::util::modelscope::ModelScopeRepo;
+use enthalpy::Res;
+use std::path::PathBuf;
 use tokio::time::Instant;
 use tracing::Level;
 
@@ -23,32 +22,17 @@ async fn main() -> Res<()> {
 }
 
 async fn transpose_file() -> Res<()> {
-    // let device = Device::new_metal(0)?;
-    let device = Device::Cpu;
-
     let (mut data, sample_rate) =
         load_audio("/Users/entropy/Documents/NCE1-英音-(MP3+LRC)/001&002－Excuse Me.mp3")?;
 
-    let repo = ModelScopeRepo::new(
-        "iic/SenseVoiceSmall",
-        "/Users/entropy/.cache/modelscope/hub/models/",
-    );
-
-    let q_repo = ModelScopeRepo::new(
-        "lovemefan/SenseVoiceGGUF",
-        "/Users/entropy/.cache/modelscope/hub/models/",
-    );
-
     let cfg = SenseVoiceSmallConfig {
-        cmvn_file: repo.get("am.mvn").await?,
-        // weight_file: q_repo.get("sense-voice-small-q8_0.gguf").await?,
-        weight_file: repo.get("model.pt").await?,
-        tokens_file: repo.get("tokens.json").await?,
-        vad: Some(VadConfig::default()),
+        model_dir: PathBuf::from("/Users/entropy/.cache/modelscope/hub/models/"),
+        vad: VadConfig::default(),
         resample: Some((sample_rate, 16000)),
+        use_gpu: false,
     };
 
-    let mut model = SenseVoiceSmall::new(cfg, &device)?;
+    let mut model = SenseVoiceSmall::with_config(cfg).await?;
 
     let start = Instant::now();
     let tokens = model.transpose(&mut data)?;
@@ -66,29 +50,20 @@ async fn transpose_file() -> Res<()> {
 }
 
 async fn transpose_stream() -> Res<()> {
-    // let device = Device::new_metal(0)?;
-    let device = Device::Cpu;
-
-    let repo = ModelScopeRepo::new(
-        "iic/SenseVoiceSmall",
-        "/Users/entropy/.cache/modelscope/hub/models/",
-    );
-
-    let mic = AudioInput::from_screen_capture_kit()?;
-    let sample_rate = mic.config.sample_rate().0;
+    let mut input = AudioInput::from_screen_capture_kit()?;
+    let sample_rate = input.config.sample_rate().0;
 
     let cfg = SenseVoiceSmallConfig {
-        cmvn_file: repo.get("am.mvn").await?,
-        weight_file: repo.get("model.pt").await?,
-        tokens_file: repo.get("tokens.json").await?,
-        vad: Some(VadConfig::default()),
+        model_dir: PathBuf::from("/Users/entropy/.cache/modelscope/hub/models/"),
+        vad: VadConfig::default(),
         resample: Some((sample_rate, 16000)),
+        use_gpu: false,
     };
 
-    let mut model = SenseVoiceSmall::new(cfg, &device)?;
+    let mut model = SenseVoiceSmall::with_config(cfg).await?;
 
-    mic.record()?;
-    while let Ok(mut chunk) = mic.rx.recv() {
+    let pcm_data = input.play()?;
+    while let Ok(mut chunk) = pcm_data.recv() {
         let start = Instant::now();
         let tokens = model.transpose(&mut chunk)?;
 

@@ -1,30 +1,36 @@
+use crate::Res;
 use crate::audio::resample::Resampler;
 use crate::audio::silero_vad::{VadConfig, VadProcessor};
 use crate::audio::{WavFrontend, WavFrontendConfig};
+use crate::config::ConfigRefresher;
+use crate::util::modelscope::{FileInfo, ModelScopeRepo, RepoFile};
 use crate::var_builder::VarBuilder;
-use crate::Res;
 use anyhow::Error;
 use candle_core::{Device, Module, Tensor};
 use candle_nn::Embedding;
 use decoder::{Decoder, Token};
 use encoder::{Encoder, EncoderConfig};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tracing::{Level, event};
 
 mod decoder;
 mod encoder;
 
+const EMBEDDING_DIM: usize = 560;
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SenseVoiceSmallConfig {
-    pub cmvn_file: PathBuf,
-    pub weight_file: PathBuf,
-    pub tokens_file: PathBuf,
-    pub vad: Option<VadConfig>,
+    pub model_dir: PathBuf,
+    pub vad: VadConfig,
     pub resample: Option<(u32, u32)>,
+    pub use_gpu: bool,
 }
 
 pub struct SenseVoiceSmall {
     device: Device,
     resampler: Option<Resampler>,
-    vad: Option<VadProcessor>,
+    vad: VadProcessor,
     embed: Embedding,
     frontend: WavFrontend,
     encoder: Encoder,
@@ -32,30 +38,118 @@ pub struct SenseVoiceSmall {
 }
 
 impl SenseVoiceSmall {
-    pub fn new(cfg: SenseVoiceSmallConfig, device: &Device) -> Res<Self> {
+    pub async fn with_config(cfg: SenseVoiceSmallConfig) -> Res<Self> {
+        if cfg.use_gpu {
+            if candle_core::utils::cuda_is_available() {
+                let device = Device::new_cuda(0)?;
+                return Self::new(cfg, &device).await;
+            }
+            if candle_core::utils::metal_is_available() {
+                let device = Device::new_metal(0)?;
+                return Self::new(cfg, &device).await;
+            }
+        }
+        Self::new(cfg, &Device::Cpu).await
+    }
+
+    pub async fn new(cfg: SenseVoiceSmallConfig, device: &Device) -> Res<Self> {
         let device = device.clone();
 
-        // embedding
+        let repo = Self::model_repo(cfg.model_dir).await;
+
+        let cmvn_file = repo.get("am.mvn").await?;
+        let weight_file = repo.get("model.pt").await?;
+        let tokens_file = repo.get("tokens.json").await?;
+
+        let embed = Self::init_embedding()?;
+        let frontend = Self::init_frontend(&cmvn_file)?;
+        let (encoder, decoder) = Self::init_encoder_decoder(weight_file, tokens_file, &device)?;
+        let vad = Self::init_vad(&cfg.vad)?;
+        let resampler = Self::init_resampler(cfg.resample)?;
+
+        Ok(Self {
+            device,
+            resampler,
+            vad,
+            embed,
+            frontend,
+            encoder,
+            decoder,
+        })
+    }
+
+    pub async fn get_required_files<P: Into<PathBuf>>(model_dir: P) -> Res<Vec<FileInfo>> {
+        let repo = Self::model_repo(model_dir).await;
+
+        let cmvn_file = repo.get_file_info("am.mvn").await?;
+        let weight_file = repo.get_file_info("model.pt").await?;
+        let tokens_file = repo.get_file_info("tokens.json").await?;
+
+        Ok(vec![cmvn_file, weight_file, tokens_file])
+    }
+
+    pub async fn check_required_files<P: Into<PathBuf>>(model_dir: P) -> bool {
+        let files = Self::get_required_files(model_dir).await;
+        match files {
+            Ok(files) => files.iter().all(|file| !file.existed),
+            Err(e) => {
+                event!(Level::ERROR, "Failed to get required files: {}", e);
+                false
+            }
+        }
+    }
+
+    pub async fn model_repo<P: Into<PathBuf>>(model_dir: P) -> ModelScopeRepo {
+        let repo = ModelScopeRepo::new("iic/SenseVoiceSmall", model_dir.into());
+
+        repo.set_repo_files(vec![
+            RepoFile {
+                name: "am.mvn".into(),
+                path: "am.mvn".into(),
+                size: 11203,
+                sha256: "29b3c740a2c0cfc6b308126d31d7f265fa2be74f3bb095cd2f143ea970896ae5"
+                    .to_string(),
+            },
+            RepoFile {
+                name: "model.pt".into(),
+                path: "model.pt".into(),
+                size: 936291369,
+                sha256: "833ca2dcfdf8ec91bd4f31cfac36d6124e0c459074d5e909aec9cabe6204a3ea"
+                    .to_string(),
+            },
+            RepoFile {
+                name: "tokens.json".into(),
+                path: "tokens.json".into(),
+                size: 352064,
+                sha256: "a2594fc1474e78973149cba8cd1f603ebed8c39c7decb470631f66e70ce58e97"
+                    .to_string(),
+            },
+        ])
+        .await;
+
+        repo
+    }
+
+    fn init_embedding() -> Res<Embedding> {
         let lid_dict_len = 7;
         let textnorm_dict_len = 2;
-        let embedding_dim = 560;
         let num_embeddings = 7 + lid_dict_len + textnorm_dict_len;
         let weight =
-            Tensor::randn::<_, f32>(0.0, 1.0, (num_embeddings, embedding_dim), &Device::Cpu)?;
-        let embed = Embedding::new(weight, embedding_dim);
+            Tensor::randn::<_, f32>(0.0, 1.0, (num_embeddings, EMBEDDING_DIM), &Device::Cpu)?;
+        let embed = Embedding::new(weight, EMBEDDING_DIM);
+        Ok(embed)
+    }
 
-        // audio frontend
-        let frontend = WavFrontend::new(WavFrontendConfig {
-            cmvn_file: Some(cfg.cmvn_file),
-            ..WavFrontendConfig::default()
-        })?;
+    fn init_encoder_decoder(
+        weight_file: PathBuf,
+        tokens_file: PathBuf,
+        device: &Device,
+    ) -> Res<(Encoder, Decoder)> {
+        let vb = VarBuilder::from_file(&weight_file, &device)?;
 
-        let vb = VarBuilder::from_file(&cfg.weight_file, &device)?;
-
-        // encoder
         let encoder = Encoder::new_with_config(
             EncoderConfig {
-                input_size: embedding_dim,
+                input_size: EMBEDDING_DIM,
                 output_size: 512,
                 attention_heads: 4,
                 linear_units: 2048,
@@ -71,29 +165,26 @@ impl SenseVoiceSmall {
             vb.clone(),
         )?;
 
-        // decoder
-        let decoder = Decoder::new(&cfg.tokens_file, vb)?;
+        let decoder = Decoder::new(&tokens_file, vb)?;
 
-        // vad
-        let vad = match cfg.vad {
-            Some(cfg) if cfg.enable => Some(VadProcessor::new(cfg)?),
-            _ => None,
-        };
+        Ok((encoder, decoder))
+    }
 
-        // resample
-        let resampler = match cfg.resample {
+    fn init_resampler(sample_config: Option<(u32, u32)>) -> Res<Option<Resampler>> {
+        Ok(match sample_config {
             Some((from, to)) => Some(Resampler::new(from, to)?),
             None => None,
-        };
+        })
+    }
 
-        Ok(Self {
-            device,
-            resampler,
-            vad,
-            embed,
-            frontend,
-            encoder,
-            decoder,
+    fn init_vad(cfg: &VadConfig) -> Res<VadProcessor> {
+        VadProcessor::new(cfg.clone())
+    }
+
+    fn init_frontend(cmvn_file: &PathBuf) -> Res<WavFrontend> {
+        WavFrontend::new(WavFrontendConfig {
+            cmvn_file: Some(cmvn_file.clone()),
+            ..WavFrontendConfig::default()
         })
     }
 
@@ -103,32 +194,17 @@ impl SenseVoiceSmall {
             Some(sampler) => &mut sampler.apply_resample(&waveform)?,
         };
 
-        let out = match &mut self.vad {
-            None => {
-                let mut out = Vec::with_capacity(1);
-                let text = self.process(waveform)?;
-                out.push(Token {
-                    text,
-                    start: 0,
-                    end: 0,
-                });
-                out
-            }
-            Some(vad) => {
-                let segments = vad.process(&waveform);
+        let segments = self.vad.process(&waveform);
 
-                let mut out = Vec::with_capacity(segments.len());
-                for mut seg in segments {
-                    let text = self.process(&mut seg.data)?;
-                    out.push(Token {
-                        text,
-                        start: seg.start,
-                        end: seg.end,
-                    });
-                }
-                out
-            }
-        };
+        let mut out = Vec::with_capacity(segments.len());
+        for mut seg in segments {
+            let text = self.process(&mut seg.data)?;
+            out.push(Token {
+                text,
+                start: seg.start,
+                end: seg.end,
+            });
+        }
 
         Ok(out)
     }
@@ -170,5 +246,21 @@ impl SenseVoiceSmall {
         let speech = speech.to_device(&self.device)?;
 
         Ok(speech)
+    }
+}
+
+impl ConfigRefresher<SenseVoiceSmallConfig> for SenseVoiceSmall {
+    fn refresh(&mut self, old: &SenseVoiceSmallConfig, new: &SenseVoiceSmallConfig) -> Res<()> {
+        if old.vad != new.vad {
+            event!(Level::DEBUG, "Refreshing VAD");
+            self.vad = Self::init_vad(&new.vad)?;
+        }
+
+        if old.resample != new.resample {
+            event!(Level::DEBUG, "Refreshing resampler");
+            self.resampler = Self::init_resampler(new.resample)?;
+        }
+
+        Ok(())
     }
 }

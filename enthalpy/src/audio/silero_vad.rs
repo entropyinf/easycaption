@@ -1,4 +1,5 @@
 use crate::Res;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use voice_activity_detector::{IteratorExt, VoiceActivityDetector};
 
@@ -6,10 +7,8 @@ use voice_activity_detector::{IteratorExt, VoiceActivityDetector};
 const CHUNK_SIZE: usize = 512;
 
 /// Configuration parameters for Voice Activity Detection
-#[derive(Debug, Clone)]
+#[derive(PartialEq, Clone, Serialize, Deserialize)]
 pub struct VadConfig {
-    /// Enable/disable voice activity detection
-    pub enable:bool,
     /// Sample rate in Hz (e.g., 16000)
     pub sample_rate: u32,
     /// Threshold for speech detection, values above this are considered voice activity
@@ -27,7 +26,6 @@ pub struct VadConfig {
 impl Default for VadConfig {
     fn default() -> Self {
         Self {
-            enable: true,
             sample_rate: 16000,
             speech_threshold: 0.5,
             silence_max_ms: 400.0,
@@ -39,7 +37,6 @@ impl Default for VadConfig {
 }
 
 /// Processes audio data to detect voice activity and segment speech
-#[derive(Debug)]
 pub struct VadProcessor {
     /// Voice activity detector instance
     vad: VoiceActivityDetector,
@@ -114,7 +111,7 @@ impl VadProcessor {
                         self.samples.extend(data);
                     } else {
                         let len = self.samples.len();
-                        if len < (self.silence_max_count * CHUNK_SIZE as f32 / 2.0) as usize {
+                        if len < (self.silence_max_count * CHUNK_SIZE as f32) as usize {
                             self.samples.extend(data);
                         };
                     }

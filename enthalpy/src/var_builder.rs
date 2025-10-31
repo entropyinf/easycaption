@@ -5,7 +5,7 @@ use candle_core::{DType, Device, Module, Var};
 use candle_nn::{Conv1d, Conv1dConfig, LayerNorm, LayerNormConfig, VarMap, init, var_builder};
 use std::path::Path;
 
-pub type Linear = Box<dyn Module>;
+pub type Linear = Box<dyn Module + Send + Sync>;
 
 pub enum VarBuilder<'a> {
     Normal(var_builder::VarBuilder<'a>),

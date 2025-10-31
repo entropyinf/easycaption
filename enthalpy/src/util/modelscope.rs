@@ -1,14 +1,15 @@
 use crate::Res;
-use anyhow::bail;
+use anyhow::{Error, bail};
 use futures_util::StreamExt;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use serde::Deserialize;
+use indicatif::{ProgressBar, ProgressStyle};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufWriter, Seek, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::event;
 
 const FILES_URL: &str = "https://modelscope.cn/api/v1/models/<model_id>/repo/files?Recursive=true";
 const DOWNLOAD_URL: &str = "https://modelscope.cn/models/<model_id>/resolve/master/<path>";
@@ -18,7 +19,7 @@ const UA: (&str, &str) = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36",
 );
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct ModelScopeResponse {
     #[serde(rename = "Code")]
     code: i32,
@@ -26,23 +27,34 @@ struct ModelScopeResponse {
     data: ModelScopeResponseData,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct ModelScopeResponseData {
     #[serde(rename = "Files")]
     files: Vec<RepoFile>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct RepoFile {
+pub struct RepoFile {
     #[serde(rename = "Name")]
-    name: String,
+    pub name: String,
     #[serde(rename = "Path")]
-    path: String,
+    pub path: String,
     #[serde(rename = "Size")]
-    size: u64,
+    pub size: u64,
     #[serde(rename = "Sha256")]
     #[allow(unused)]
+    pub sha256: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct FileInfo {
+    name: String,
+    path: String,
+    size: u64,
     sha256: String,
+    absolute_path: PathBuf,
+    downloaded_size: u64,
+    pub existed: bool,
 }
 
 const BAR_STYLE: &str = "{msg:<30} {bar} {decimal_bytes:<10} / {decimal_total_bytes:<10} {decimal_bytes_per_sec:<12} {percent:<3}%  {eta_precise}";
@@ -74,23 +86,69 @@ impl ModelScopeRepo {
         Ok(file_path)
     }
 
+    pub async fn get_file_info(&self, file: &str) -> Res<FileInfo> {
+        let repo_file = self.get_repo_file(file).await?;
+        let absolute_path = self.save_dir.join(&repo_file.path);
+        let existed = tokio::fs::try_exists(&absolute_path).await?;
+        let downloading_file_path = self.save_dir.join(format!("{}.downloading", &repo_file.path));
+        let downloaded_size = match tokio::fs::metadata(&downloading_file_path).await {
+            Ok(meta) => {meta.size()}
+            Err(_) => {0}
+        };
+
+        Ok(FileInfo {
+            name: repo_file.name,
+            path: repo_file.path,
+            size: repo_file.size,
+            sha256: repo_file.sha256,
+            absolute_path,
+            downloaded_size,
+            existed,
+        })
+    }
+
+    /// Set repo files manually in offline mode
+    pub async fn set_repo_files(&self, repo_files: Vec<RepoFile>) {
+        self.repo_files.write().await.replace(repo_files);
+    }
+
+    async fn get_repo_file(&self, file: &str) -> Res<RepoFile> {
+        let repo_files = self.get_repo_files().await?;
+
+        let repo_file = repo_files
+            .iter()
+            .find(|f| f.name == file)
+            .ok_or_else(|| Error::msg("File not found"))?
+            .clone();
+
+        Ok(repo_file)
+    }
+
     async fn download(&self, file: &str) -> Res<()> {
-        info!(
-            "Downloading model {} to: {}",
-            self.model_id,
+        fs::create_dir_all(&self.save_dir)?;
+        let repo_file = self.get_repo_file(file).await?;
+
+        let bar = ProgressBar::new(repo_file.size);
+        let style = ProgressStyle::default_bar().template(BAR_STYLE)?;
+        bar.set_style(style);
+        bar.set_message(repo_file.name.clone());
+
+        self.download_with_progress(file, bar).await
+    }
+
+    pub async fn download_with_progress(&self, file: &str, bar: impl Progress) -> Res<()> {
+        let repo_file = self.get_repo_file(file).await?;
+        let file_name = &repo_file.name;
+        event!(
+            tracing::Level::INFO,
+            "Downloading file {} to: {}",
+            file_name,
             self.save_dir.display()
         );
 
-        fs::create_dir_all(&self.save_dir)?;
+        self.download_file(repo_file, bar).await?;
 
-        let repo_files = self.get_repo_files().await?;
-
-        if let Some(repo_file) = repo_files.into_iter().find(|f| f.name == file) {
-            let bar = ProgressBar::new(repo_file.size);
-            let style = ProgressStyle::default_bar().template(BAR_STYLE)?;
-            bar.set_style(style);
-            self.download_file(repo_file, bar).await?;
-        }
+        event!(tracing::Level::INFO, "Downloaded",);
 
         Ok(())
     }
@@ -116,7 +174,7 @@ impl ModelScopeRepo {
         Ok(repo_files)
     }
 
-    async fn download_file(&self, repo_file: RepoFile, bar: ProgressBar) -> Res<()> {
+    async fn download_file(&self, repo_file: RepoFile, bar: impl Progress) -> Res<()> {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .build()?;
@@ -124,7 +182,6 @@ impl ModelScopeRepo {
         let path = &repo_file.path;
         let name = &repo_file.name;
 
-        bar.set_message(name.clone());
         let temp_file_path = self.save_dir.join(format!("{path}.downloading"));
 
         if let Some(parent) = temp_file_path.parent() {
@@ -212,4 +269,30 @@ impl ModelScopeRepo {
     }
 }
 
-trait ProgressView {}
+pub trait Progress {
+    fn inc(&self, delta: u64);
+
+    fn set_position(&self, pos: u64);
+
+    fn finish(&self);
+
+    fn set_length(&self, len: u64);
+}
+
+impl Progress for ProgressBar {
+    fn inc(&self, delta: u64) {
+        ProgressBar::inc(self, delta);
+    }
+
+    fn set_position(&self, pos: u64) {
+        ProgressBar::set_position(self, pos);
+    }
+
+    fn finish(&self) {
+        ProgressBar::finish(self);
+    }
+
+    fn set_length(&self, len: u64) {
+        ProgressBar::set_length(self, len);
+    }
+}
