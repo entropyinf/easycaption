@@ -41,10 +41,12 @@ const Notification: React.FC<NotificationProps> = ({ message, onClose }) => {
   }, [onClose]);
 
   return (
-    <div className={`fixed top-4 right-4 z-50 p-4 rounded-md shadow-lg text-white flex items-start ${getTypeColor()}`}>
-      <div className="mr-2 font-bold">{getTypeText()}:</div>
-      <div className="flex-1">{message.content}</div>
-      <button onClick={onClose} className="ml-4 font-bold">✕</button>
+    <div className={`p-3 rounded-lg shadow-lg text-white flex items-start backdrop-blur-lg bg-opacity-90 ${getTypeColor()}`}>
+      <div className="mr-2 font-medium text-sm">{getTypeText()}:</div>
+      <div className="flex-1 text-sm">{message.content}</div>
+      <button onClick={onClose} className="ml-3 font-bold hover:bg-white/20 rounded-full w-5 h-5 flex items-center justify-center text-sm">
+        ✕
+      </button>
     </div>
   );
 };
@@ -66,7 +68,7 @@ const NotificationContainer: React.FC = () => {
 
     return () => {
       unlisten.then(unlistenFn => unlistenFn());
-    };
+    }
   }, [nextId]);
 
   const handleClose = (id: number) => {
@@ -74,7 +76,7 @@ const NotificationContainer: React.FC = () => {
   };
 
   return (
-    <>
+    <div className='flex flex-col gap-2 fixed top-3 right-3 z-50'>
       {notifications.map(({ id, message }) => (
         <Notification
           key={id}
@@ -82,7 +84,7 @@ const NotificationContainer: React.FC = () => {
           onClose={() => handleClose(id)}
         />
       ))}
-    </>
+    </div>
   );
 };
 

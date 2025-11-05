@@ -164,15 +164,20 @@ export default function Settings() {
                             fetchCheckRequiredFiles(value)
                         })}
                         placeholder="模型缓存路径"
+                        disable={config.enable}
                     />
                     <label className="block text-sm font-medium mb-1">所需文件</label>
-                    {requiredFiles.map((file, index) => (
-                        <FileStatusItem
-                            key={index}
-                            file={file}
-                            modelDir={config.model_config.model_dir}
-                        />
-                    ))}
+                    <div>
+                        {requiredFiles.map((file, index) => (
+                            <div className="m-1">
+                                <FileStatusItem
+                                    key={index}
+                                    file={file}
+                                    modelDir={config.model_config.model_dir}
+                                />
+                            </div>
+                        ))}
+                    </div>
                 </SectionCard>
 
 
@@ -254,7 +259,7 @@ export default function Settings() {
             <NotificationContainer />
             <aside className="w-48 bg-white flex flex-col p-4">
                 <div className="mb-6">
-                    <h2 className="text-xl font-bold" data-tauri-drag-region>EasyCaption</h2>
+                    <h2 className="text-xl font-bold" data-tauri-drag-region>Easy Caption</h2>
                 </div>
                 <nav className="flex-grow">
                     <ul>

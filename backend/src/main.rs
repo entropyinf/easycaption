@@ -10,6 +10,7 @@ mod cmds;
 mod notify;
 mod transpose;
 mod download;
+mod config;
 
 #[tokio::main]
 async fn main() {

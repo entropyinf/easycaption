@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface NumberInputProps {
     label: string;
@@ -15,15 +15,33 @@ const NumberInput: React.FC<NumberInputProps> = ({
     placeholder = '',
     step = '1'
 }) => {
+    const [localValue, setLocalValue] = useState<string>(value.toString());
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setLocalValue(e.target.value);
+    };
+
+    const handleBlur = () => {
+        const numValue = parseFloat(localValue) || 0;
+        if (numValue !== value) {
+            onChange(numValue);
+        }
+    };
+
+    React.useEffect(() => {
+        setLocalValue(value.toString());
+    }, [value]);
+
     return (
         <div>
-            <label className="block text-sm font-medium mb-1">{label}</label>
+            <label className="block text-sm font-medium mb-1 text-gray-900">{label}</label>
             <input
                 type="number"
                 step={step}
-                value={value}
-                onChange={(e) => onChange(e.target.valueAsNumber || 0)}
-                className="w-full px-3 py-1 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={localValue}
+                onChange={handleChange}
+                onBlur={handleBlur}
+                className="w-full px-2.5 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent transition duration-200 ease-in-out shadow-sm"
                 placeholder={placeholder}
             />
         </div>

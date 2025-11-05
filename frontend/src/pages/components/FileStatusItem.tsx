@@ -82,7 +82,7 @@ export default function FileStatusItem({ file, modelDir }: FileStatusItemProps) 
     const renderActionButton = () => {
         if (fileExisted) {
             return (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 whitespace-nowrap">
+                <span className="inline-flex items-center ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 whitespace-nowrap">
                     已下载
                 </span>
             );
@@ -104,7 +104,7 @@ export default function FileStatusItem({ file, modelDir }: FileStatusItemProps) 
         return (
             <button
                 onClick={handleDownload}
-                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white whitespace-nowrap ${buttonClass}`}
+                className={`inline-flex items-center ml-2 px-2 py-0.5 rounded-full text-xs font-medium text-white whitespace-nowrap transition-colors duration-200 ${buttonClass}`}
             >
                 {buttonText}
             </button>
@@ -112,24 +112,24 @@ export default function FileStatusItem({ file, modelDir }: FileStatusItemProps) 
     };
 
     return (
-        <div className="px-4 py-1 flex justify-between my-2 shadow rounded-md space-x-2 w-full">
+        <div className="px-3 py-2 flex justify-between rounded-md bg-gray-50 hover:bg-gray-100 transition-colors duration-200 w-full">
             <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
-                    <span className="font-medium text-gray-900 truncate">{file.name}</span>
-                    <div className="mt-1 flex items-center text-xs text-gray-500">
-                        <span className="text-sm">{size}</span>
+                    <span className="font-medium text-gray-900 truncate text-sm">{file.name}</span>
+                    <div className="flex items-center text-xs text-gray-500 ml-2">
+                        <span>{size}</span>
                     </div>
                 </div>
 
                 {(isDownloading || downloadSize > 0) && (
-                    <div className="mt-2">
+                    <div className="mt-1.5">
                         <div className="flex justify-between text-xs text-gray-500 mb-1">
                             <span>{downloadedSize} / {size}</span>
                             <span>{progressPercentage}%</span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div className="w-full bg-gray-200 rounded-full h-1.5">
                             <div
-                                className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
+                                className="bg-blue-500 h-1.5 rounded-full transition-all duration-300 ease-out"
                                 style={{ width: `${progressPercentage}%` }}
                             ></div>
                         </div>

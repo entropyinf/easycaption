@@ -2,9 +2,9 @@ use crate::Res;
 use anyhow::Error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Host, HostId, Stream, SupportedStreamConfig};
+use serde::Serialize;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
-use serde::Serialize;
 
 pub struct AudioInput {
     pub config: SupportedStreamConfig,
@@ -29,7 +29,6 @@ impl AudioInput {
 
     #[cfg(target_os = "macos")]
     pub fn from_screen_capture_kit() -> Res<Self> {
-        // Set up the input device and stream with the default input config.
         let host = cpal::host_from_id(HostId::ScreenCaptureKit)?;
         let device = host
             .default_input_device()
@@ -52,7 +51,10 @@ impl AudioInput {
         for host_id in Self::host_ids() {
             let host = Self::host_of_name(host_id.name())?;
             for device in host.input_devices()?.into_iter() {
-                out.push(HostDevice::new(host_id.name().to_string(), device.name()?.to_string()))
+                out.push(HostDevice::new(
+                    host_id.name().to_string(),
+                    device.name()?.to_string(),
+                ))
             }
         }
 
@@ -67,7 +69,7 @@ impl AudioInput {
         let host_id = Self::host_ids()
             .into_iter()
             .find(|h| h.name() == host_name)
-            .ok_or_else(|| Error::msg("Host not found"))?;
+            .ok_or_else(|| Error::msg(format!("Host not found: {}", host_name)))?;
 
         Ok(cpal::host_from_id(host_id)?)
     }
@@ -121,7 +123,7 @@ impl AudioInput {
 }
 
 #[derive(Serialize)]
-pub struct HostDevice{
+pub struct HostDevice {
     host: String,
     device: String,
 }

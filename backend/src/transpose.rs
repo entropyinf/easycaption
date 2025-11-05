@@ -1,3 +1,4 @@
+use crate::config::ConfigSync;
 use crate::notify::Notifier;
 use anyhow::bail;
 use enthalpy::audio::input::AudioInput;
@@ -10,8 +11,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::select;
 use tokio::sync::mpsc::{channel, Sender};
-use tokio::sync::{watch, OnceCell, RwLock};
-use tokio::time::Instant;
+use tokio::sync::{OnceCell, RwLock};
 use tracing::event;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -40,7 +40,7 @@ impl TransposeService {
     }
 
     pub async fn get_config(&self) -> TransposeConfig {
-        self.config.read().await.get_curr()
+        self.config.read().await.curr_value().clone()
     }
 
     pub async fn new(app_handle: AppHandle) -> Res<Self> {
@@ -71,13 +71,13 @@ impl TransposeService {
         event!(tracing::Level::INFO, "Updating config {}", patch);
 
         let mut config = self.config.write().await;
-        let old = config.get_curr();
-        let mut new = serde_json::to_value(old.clone())?;
+        let old = config.curr_value().clone();
+        let mut new = serde_json::to_value(old)?;
         json_patch::merge(&mut new, &patch);
         let new = serde_json::from_value::<TransposeConfig>(new)?;
 
         config.update(new)?;
-        config.watch_curr().await?;
+        config.wait_finish().await?;
 
         Ok(())
     }
@@ -108,9 +108,9 @@ impl Transpose {
 
             loop {
                 select! {
-                    Ok(new) = transpose.config.watch_new() => {
+                    Ok(_) = transpose.config.wait_update() => {
                         event!(tracing::Level::DEBUG, "Received config");
-                        transpose.update_config(new).await;
+                        transpose.update_config().await;
                     },
                     Some(mut pcm) = pcm_rx.recv() => {
                         if let Err(e) = transpose.transpose(&mut pcm).await{
@@ -161,36 +161,33 @@ impl Transpose {
         Ok(())
     }
 
-    async fn update_config(&mut self, new: TransposeConfig) {
-        match self.do_update_config(new).await {
+    async fn update_config(&mut self) {
+        match self.do_update_config().await {
             Ok(_) => {
-                let _ = self.config.commit(true).await;
+                let _ = self.config.finish(true).await;
             }
             Err(e) => {
                 Notifier::get().await.error(&e.to_string());
-                let _ = self.config.commit(true).await;
+                let _ = self.config.finish(false).await;
             }
         }
     }
 
-    async fn do_update_config(&mut self, new: TransposeConfig) -> Res<()> {
+    async fn do_update_config(&mut self) -> Res<()> {
+        let new = self.config.new_value().clone();
         if !new.enable {
             self.model.take();
             self.input.take();
             return Ok(());
         }
 
-        let old = self.config.get_curr();
+        let old = self.config.curr_value().clone();
 
         let should_reload_input = new.input_host != old.input_host
             || new.input_device != old.input_device
             || self.input.is_none();
 
         if should_reload_input {
-            self.notifier.info(&format!(
-                "Record input {} - {}",
-                new.input_host, new.input_device
-            ));
             let pcm_tx = self.pcm_tx.clone();
             let mut input = AudioInput::with_host_device(&new.input_host, &new.input_device)?;
             let rx = input.play()?;
@@ -226,7 +223,7 @@ impl Transpose {
                 }
 
                 event!(tracing::Level::DEBUG, "Loading model");
-                self.notifier.info("Loading model");
+                self.notifier.info("Loading");
                 match SenseVoiceSmall::with_config(new.model_config).await {
                     Ok(new_model) => {
                         self.model.replace(new_model);
@@ -244,65 +241,5 @@ impl Transpose {
         }
 
         Ok(())
-    }
-}
-
-#[derive(Clone)]
-struct ConfigSync<T: Clone> {
-    curr_rx: watch::Receiver<T>,
-    curr_tx: watch::Sender<T>,
-    new_rx: watch::Receiver<T>,
-    new_tx: watch::Sender<T>,
-}
-
-impl<T: Clone + Send + Sync + 'static> ConfigSync<T> {
-    pub fn new(initial: T) -> Self {
-        println!("Creating config sync");
-        let (curr_tx, curr_rx) = watch::channel(initial.clone());
-        let (new_tx, new_rx) = watch::channel(initial);
-        Self {
-            curr_rx,
-            curr_tx,
-            new_rx,
-            new_tx,
-        }
-    }
-
-    pub fn update(&self, value: T) -> Res<()> {
-        self.new_tx.send(value)?;
-        Ok(())
-    }
-
-    /// Commit the new value to the current value
-    pub async fn commit(&mut self, success: bool) -> Res<()> {
-        if success {
-            let new = self.get_new();
-            self.curr_tx.send(new)?;
-        } else {
-            self.curr_rx.mark_changed();
-        }
-        Ok(())
-    }
-
-    pub async fn watch_new(&mut self) -> Res<T> {
-        self.new_rx.changed().await?;
-        println!("New value received");
-        Ok(self.get_new())
-    }
-
-    pub fn get_new(&mut self) -> T {
-        println!("Getting new value");
-        self.new_rx.borrow().clone()
-    }
-
-    pub async fn watch_curr(&mut self) -> Res<T> {
-        self.curr_rx.changed().await?;
-        println!("Current value received");
-        Ok(self.get_curr())
-    }
-
-    pub fn get_curr(&self) -> T {
-        println!("Getting current value");
-        self.curr_rx.borrow().clone()
     }
 }
