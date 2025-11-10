@@ -74,7 +74,7 @@ impl TransposeService {
     }
 
     pub async fn update_config(&self, patch: Value) -> Res<()> {
-        event!(tracing::Level::INFO, "Check lock {}", patch);
+        event!(tracing::Level::DEBUG, "Update config {}", patch);
         let mut config = self.config.write().await;
         let old = config.curr().clone();
         let mut new = serde_json::to_value(old)?;
@@ -82,7 +82,6 @@ impl TransposeService {
         let new = serde_json::from_value::<TransposeConfig>(new)?;
 
         config.update_sync(new).await?;
-        event!(tracing::Level::INFO, "Release lock {}", patch);
 
         Ok(())
     }
