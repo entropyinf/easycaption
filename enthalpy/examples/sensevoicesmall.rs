@@ -1,8 +1,8 @@
+use enthalpy::Res;
 use enthalpy::audio::input::AudioInput;
 use enthalpy::audio::load_audio;
 use enthalpy::audio::silero_vad::VadConfig;
 use enthalpy::sense_voice_small::{SenseVoiceSmall, SenseVoiceSmallConfig};
-use enthalpy::Res;
 use std::path::PathBuf;
 use tokio::time::Instant;
 use tracing::Level;
@@ -35,7 +35,8 @@ async fn transpose_file() -> Res<()> {
     let mut model = SenseVoiceSmall::with_config(cfg).await?;
 
     let start = Instant::now();
-    let tokens = model.transpose(&mut data)?;
+    let mut segments = model.segment(&mut data)?;
+    let tokens = model.transpose(&mut segments)?;
     println!("{:.2}", start.elapsed().as_secs_f32());
     for token in tokens {
         println!(
@@ -65,7 +66,8 @@ async fn transpose_stream() -> Res<()> {
     let pcm_data = input.play()?;
     while let Ok(mut chunk) = pcm_data.recv() {
         let start = Instant::now();
-        let tokens = model.transpose(&mut chunk)?;
+        let mut segments = model.segment(&mut chunk)?;
+        let tokens = model.transpose(&mut segments)?;
 
         for token in tokens {
             print!("cost:{:.2},", start.elapsed().as_secs_f32());

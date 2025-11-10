@@ -25,8 +25,6 @@ struct Message {
 pub enum MessageType {
     #[serde(rename = "info")]
     Info,
-    #[serde(rename = "warn")]
-    Warn,
     #[serde(rename = "error")]
     Error,
 }

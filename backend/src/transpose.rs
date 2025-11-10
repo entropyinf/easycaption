@@ -1,17 +1,19 @@
+use std::mem;
 use crate::config::ConfigSync;
 use crate::notify::Notifier;
 use anyhow::bail;
 use enthalpy::audio::input::AudioInput;
 use enthalpy::audio::silero_vad::VadConfig;
-use enthalpy::sense_voice_small::{SenseVoiceSmall, SenseVoiceSmallConfig};
+use enthalpy::sense_voice_small::{SenseVoiceSmall, SenseVoiceSmallConfig, Token};
 use enthalpy::{ConfigRefresher, Res};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
-use tokio::select;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::{OnceCell, RwLock};
+use tokio::{select, time};
 use tracing::event;
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -19,6 +21,8 @@ pub struct TransposeConfig {
     enable: bool,
     input_host: String,
     input_device: String,
+    realtime: bool,
+    realtime_rate: u64,
     model_config: SenseVoiceSmallConfig,
 }
 
@@ -40,7 +44,7 @@ impl TransposeService {
     }
 
     pub async fn get_config(&self) -> TransposeConfig {
-        self.config.read().await.curr_value().clone()
+        self.config.read().await.curr().clone()
     }
 
     pub async fn new(app_handle: AppHandle) -> Res<Self> {
@@ -50,6 +54,8 @@ impl TransposeService {
             enable: false,
             input_host: String::default(),
             input_device: String::default(),
+            realtime: false,
+            realtime_rate: 800,
             model_config: SenseVoiceSmallConfig {
                 model_dir,
                 vad: VadConfig::default(),
@@ -68,16 +74,15 @@ impl TransposeService {
     }
 
     pub async fn update_config(&self, patch: Value) -> Res<()> {
-        event!(tracing::Level::INFO, "Updating config {}", patch);
-
+        event!(tracing::Level::INFO, "Check lock {}", patch);
         let mut config = self.config.write().await;
-        let old = config.curr_value().clone();
+        let old = config.curr().clone();
         let mut new = serde_json::to_value(old)?;
         json_patch::merge(&mut new, &patch);
         let new = serde_json::from_value::<TransposeConfig>(new)?;
 
-        config.update(new)?;
-        config.wait_finish().await?;
+        config.update_sync(new).await?;
+        event!(tracing::Level::INFO, "Release lock {}", patch);
 
         Ok(())
     }
@@ -90,6 +95,7 @@ struct Transpose {
     pcm_tx: Sender<Vec<f32>>,
     app_handle: AppHandle,
     notifier: Notifier,
+    realtime_interval: time::Interval,
 }
 
 impl Transpose {
@@ -104,6 +110,7 @@ impl Transpose {
                 pcm_tx,
                 app_handle,
                 notifier,
+                realtime_interval: time::interval(Duration::from_hours(999999)),
             };
 
             loop {
@@ -116,6 +123,9 @@ impl Transpose {
                         if let Err(e) = transpose.transpose(&mut pcm).await{
                             Notifier::get().await.error(&e.to_string());
                         }
+                    },
+                    _ = transpose.realtime_interval.tick() => {
+                        let _ = transpose.transpose_vad_cache().await;
                     },
                     else => {
                         return;
@@ -132,19 +142,35 @@ impl Transpose {
             event!(tracing::Level::DEBUG, "Model is none");
             return Ok(());
         }
+        let model = self.model.as_mut().unwrap();
+        let mut segments = model.segment(pcm)?;
+        let tokens: Vec<Token> = model.transpose(&mut segments)?;
 
-        let window = self.app_handle.get_window("caption");
-        if window.is_none() {
+        self.emit_tokens(tokens);
+
+        Ok(())
+    }
+
+    async fn transpose_vad_cache(&mut self) -> Res<()> {
+        if self.model.is_none() {
+            event!(tracing::Level::DEBUG, "Model is none");
             return Ok(());
         }
-        let window = window.unwrap();
-
         let model = self.model.as_mut().unwrap();
-        let tokens = model.transpose(pcm)?;
+
+        if self.config.curr().realtime {
+            let tokens = model.transpose_vad_cache()?;
+            self.emit_tokens(tokens);
+        }
+
+        Ok(())
+    }
+
+    fn emit_tokens(&mut self, tokens: Vec<Token>) {
         for token in tokens {
             event!(tracing::Level::DEBUG, "Token: {}", token.text);
 
-            let emit_out = window.emit(
+            let emit_out = self.app_handle.emit(
                 "caption",
                 json!({
                     "start": token.start,
@@ -157,8 +183,6 @@ impl Transpose {
                 event!(tracing::Level::ERROR, "Error emitting event {}", e);
             }
         }
-
-        Ok(())
     }
 
     async fn update_config(&mut self) {
@@ -174,14 +198,14 @@ impl Transpose {
     }
 
     async fn do_update_config(&mut self) -> Res<()> {
-        let new = self.config.new_value().clone();
+        let new = self.config.fresh().clone();
         if !new.enable {
             self.model.take();
             self.input.take();
             return Ok(());
         }
 
-        let old = self.config.curr_value().clone();
+        let old = self.config.curr().clone();
 
         let should_reload_input = new.input_host != old.input_host
             || new.input_device != old.input_device
@@ -207,6 +231,18 @@ impl Transpose {
             });
             self.input.replace(input);
         };
+
+        match (old.realtime, new.realtime) {
+            (true, false) => {
+                let mut interval= time::interval(Duration::from_hours(999999));
+                mem::swap(&mut self.realtime_interval, &mut interval);
+            }
+            (_, true) => {
+                let mut interval= time::interval(Duration::from_millis(new.realtime_rate));
+                mem::swap(&mut self.realtime_interval, &mut interval);
+            }
+            _ => {}
+        }
 
         let device_changed = old.model_config.use_gpu != new.model_config.use_gpu;
         let model_dir_changed = old.model_config.model_dir != new.model_config.model_dir;

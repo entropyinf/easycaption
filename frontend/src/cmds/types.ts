@@ -18,6 +18,17 @@ export type TransposeConfig = {
      */
     input_device: string;
 
+
+    /**
+     * Whether to transpose in real-time
+     */
+    realtime: boolean;
+
+    /**
+     * Real-time rate for transpose
+     */
+    realtime_rate: number;
+
     /**
      * Model configuration for SenseVoiceSmall
      */

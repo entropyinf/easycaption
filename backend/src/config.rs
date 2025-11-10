@@ -1,6 +1,7 @@
 use enthalpy::Res;
 use tokio::sync::watch;
 use tokio::sync::watch::Ref;
+use tracing::event;
 
 #[derive(Clone)]
 pub struct ConfigSync<T: Clone> {
@@ -22,19 +23,9 @@ impl<T: Clone + Send + Sync + 'static> ConfigSync<T> {
         }
     }
 
-    pub fn update(&self, value: T) -> Res<()> {
+    pub async fn update_sync(&mut self, value: T) -> Res<()> {
         self.new_tx.send(value)?;
-        Ok(())
-    }
-
-    /// Commit the new value to the current value
-    pub async fn finish(&mut self, commit: bool) -> Res<()> {
-        if commit {
-            let new = self.new_value();
-            self.curr_tx.send(new.clone())?;
-        } else {
-            self.curr_rx.mark_changed();
-        }
+        self.curr_rx.changed().await?;
         Ok(())
     }
 
@@ -43,16 +34,24 @@ impl<T: Clone + Send + Sync + 'static> ConfigSync<T> {
         Ok(())
     }
 
-    pub fn new_value(&self) -> Ref<'_,T> {
-        self.new_rx.borrow()
-    }
-
-    pub async fn wait_finish(&mut self) -> Res<()> {
-        self.curr_rx.changed().await?;
+    /// Commit the new value to the current value
+    pub async fn finish(&mut self, commit: bool) -> Res<()> {
+        if commit {
+            let new = self.fresh();
+            event!(tracing::Level::DEBUG, "Commit");
+            self.curr_tx.send(new.clone())?;
+        } else {
+            event!(tracing::Level::DEBUG, "Keep");
+            self.curr_tx.send_modify(|_v|{});
+        }
         Ok(())
     }
 
-    pub fn curr_value(&self) -> Ref<'_,T> {
+    pub fn fresh(&self) -> Ref<'_,T> {
+        self.new_rx.borrow()
+    }
+
+    pub fn curr(&self) -> Ref<'_,T> {
         self.curr_rx.borrow()
     }
 }

@@ -83,9 +83,15 @@ impl VadProcessor {
         })
     }
 
-    pub fn process(&mut self, samples: &[f32]) -> Vec<Segment> {
-        // Buffer
+    pub fn push(&mut self, samples: &[f32]) {
         self.buffer.extend(samples);
+    }
+    pub fn process(&mut self, samples: &[f32]) -> Vec<Segment> {
+        self.push(samples);
+        self.segment()
+    }
+
+    pub fn segment(&mut self) -> Vec<Segment> {
         let len = self.buffer.len();
         let chunk_count = len / CHUNK_SIZE;
         if chunk_count == 0 {
@@ -166,8 +172,22 @@ impl VadProcessor {
         segments
     }
 
-    pub fn samples(&self) -> &VecDeque<f32> {
-        &self.samples
+    pub fn samples(&self) -> Option<Segment> {
+        if let Status::Speech {
+            start,
+            speech_count,
+            ..
+        } = self.status
+        {
+            let data = self.samples.iter().map(|x| *x).collect::<Vec<f32>>();
+            Some(Segment {
+                start,
+                end: start + speech_count * self.chunk_ms as u32,
+                data,
+            })
+        } else {
+            None
+        }
     }
 }
 

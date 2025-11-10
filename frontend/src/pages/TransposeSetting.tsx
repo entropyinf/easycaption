@@ -1,34 +1,23 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { currentMonitor } from "@tauri-apps/api/window";
-import React, { useEffect, useState } from "react";
-import { getTranscribeConfig, updateTranscribeConfig, getDevices, checkRequiredFiles } from "../cmds"; // 修改这一行
-import { FileInfo, TransposeConfig } from "../cmds/types";
 import { produce, type WritableDraft } from "immer";
-import SettingItem from "./components/SettingItem";
-import SectionCard from "./components/SectionCard";
-import TextInput from "./components/TextInput";
-import NumberInput from "./components/NumberInput";
-import SelectInput from "./components/SelectInput";
-import FileStatusItem from "./components/FileStatusItem";
-import NotificationContainer from "./components/Notification.tsx";
+import { useEffect, useState } from "react";
+import { checkRequiredFiles, getDevices, getTranscribeConfig, updateTranscribeConfig } from "../cmds/index.ts"; // 修改这一行
+import { FileInfo, TransposeConfig } from "../cmds/types.ts";
+import FileStatusItem from "./components/FileStatusItem.tsx";
+import NumberInput from "./components/NumberInput.tsx";
+import SectionCard from "./components/SectionCard.tsx";
+import SelectInput from "./components/SelectInput.tsx";
+import SettingItem from "./components/SettingItem.tsx";
+import TextInput from "./components/TextInput.tsx";
 
-type SidebarItem = {
-    label: string;
-    icon?: React.ReactNode;
-    isActive?: boolean;
-};
 
 type AudioDevice = {
     host: string;
     device: string;
 };
 
-const sidebarItems: SidebarItem[] = [
-    { label: "配置", isActive: true },
-    { label: "关于", isActive: false },
-];
-
-export default function Settings() {
+export default function TransposeSetting() {
     const [captionWindowVisiable, setCaptionWindowVisiable] = useState(false);
     const [config, setConfig] = useState<TransposeConfig | null>(null);
     const [inputs, setInputs] = useState<AudioDevice[]>([]);
@@ -76,7 +65,7 @@ export default function Settings() {
                 url: '/index.html#caption',
                 title: '字幕',
                 width: width,
-                height: 100,
+                height: 200,
                 x: x,
                 y: y,
                 transparent: true,
@@ -100,41 +89,12 @@ export default function Settings() {
         await fetchConfig();
     };
 
-    const renderConfigForm = () => {
-        if (!config) return <div>Loading...</div>;
+    if (!config) return <div>Loading...</div>;
 
-        return (
+    return (
+        <>
             <div className="space-y-2">
-                <SectionCard title="基础配置">
-                    <SettingItem
-                        label="开启字幕"
-                        description="开启字幕窗口"
-                        checked={captionWindowVisiable}
-                        onChange={toggleCaption}
-                    />
-
-                    <SettingItem
-                        label="启用转录"
-                        description="是否启用语音转文字功能"
-                        checked={config.enable}
-                        onChange={() => updateConfig(draft => {
-                            draft.enable = !draft.enable;
-                        })}
-                    />
-
-                    <SettingItem
-                        label="使用GPU"
-                        description="是否使用GPU(如果有的话)"
-                        checked={config.model_config.use_gpu}
-                        onChange={() => updateConfig(draft => {
-                            draft.model_config.use_gpu = !draft.model_config.use_gpu;
-                        })}
-                    />
-
-                </SectionCard>
-
-
-                <SectionCard title="输入配置">
+                <SectionCard title="输入">
                     <SelectInput
                         label="输入设备"
                         value={`${config.input_host}-${config.input_device}`}
@@ -154,7 +114,59 @@ export default function Settings() {
                 </SectionCard>
 
 
-                <SectionCard title="模型配置">
+                <SectionCard title="基础">
+                    <SettingItem
+                        label="开启字幕"
+                        description="开启字幕窗口"
+                        checked={captionWindowVisiable}
+                        onChange={toggleCaption}
+                    />
+
+                    <SettingItem
+                        label="启用转录"
+                        description="是否启用语音转文字功能"
+                        checked={config.enable}
+                        onChange={() => updateConfig(draft => {
+                            draft.enable = !draft.enable;
+                        })}
+                    />
+
+
+
+                    <SettingItem
+                        label="使用GPU"
+                        description="是否使用GPU (如果有CUDA 或者 Metal)"
+                        checked={config.model_config.use_gpu}
+                        onChange={() => updateConfig(draft => {
+                            draft.model_config.use_gpu = !draft.model_config.use_gpu;
+                        })}
+                    />
+
+                </SectionCard>
+
+
+
+                <SectionCard title="实时性">
+                    <SettingItem
+                        label="开启"
+                        description="提升实时性"
+                        checked={config.realtime}
+                        onChange={() => updateConfig(draft => {
+                            draft.realtime = !draft.realtime;
+                        })}
+                    />
+                    <NumberInput
+                        label="间隔"
+                        value={config.realtime_rate}
+                        onChange={(value) => updateConfig(draft => {
+                            draft.realtime_rate = value || 1000;
+                        })}
+                        placeholder="采样率"
+                    />
+                </SectionCard>
+
+
+                <SectionCard title="模型">
                     <TextInput
                         label="模型目录"
                         value={config.model_config.model_dir}
@@ -181,7 +193,7 @@ export default function Settings() {
                 </SectionCard>
 
 
-                <SectionCard title="VAD 配置">
+                <SectionCard title="VAD">
                     <NumberInput
                         label="采样率 (Hz)"
                         value={config.model_config.vad.sample_rate}
@@ -251,36 +263,6 @@ export default function Settings() {
                     />
                 </SectionCard>
             </div>
-        );
-    };
-
-    return (
-        <div className="flex h-screen bg-gray-100 select-none">
-            <NotificationContainer />
-            <aside className="w-48 bg-white flex flex-col p-4">
-                <div className="mb-6">
-                    <h2 className="text-xl font-bold" data-tauri-drag-region>Easy Caption</h2>
-                </div>
-                <nav className="flex-grow">
-                    <ul>
-                        {sidebarItems.map((item, index) => (
-                            <li
-                                key={index}
-                                className={`py-2 px-3 rounded-md cursor-pointer ${item.isActive
-                                    ? "bg-blue-500 text-white"
-                                    : "hover:bg-gray-100"
-                                    }`}
-                            >
-                                {item.label}
-                            </li>
-                        ))}
-                    </ul>
-                </nav>
-            </aside>
-
-            <main className="flex-grow p-2 overflow-auto">
-                {renderConfigForm()}
-            </main>
-        </div>
+        </>
     );
 };

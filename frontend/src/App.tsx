@@ -1,11 +1,11 @@
 import { ReactNode } from "react";
 import "./App.css";
-import Settings from "./pages/Setting";
 import Caption from "./pages/Caption";
+import Layout from "./pages/Layout";
 
 const routes: Record<string, ReactNode> = {
   caption: <Caption />,
-  setting: <Settings />,
+  setting: <Layout />,
 }
 
 function App() {
@@ -13,7 +13,7 @@ function App() {
 
   return (
     <>
-      {routes[pageId] || <Settings />}
+      {routes[pageId] || <Layout />}
     </>
   );
 }

@@ -1,6 +1,6 @@
 use crate::Res;
 use crate::audio::resample::Resampler;
-use crate::audio::silero_vad::{VadConfig, VadProcessor};
+use crate::audio::silero_vad::{Segment, VadConfig, VadProcessor};
 use crate::audio::{WavFrontend, WavFrontendConfig};
 use crate::config::ConfigRefresher;
 use crate::util::modelscope::{FileInfo, ModelScopeRepo, RepoFile};
@@ -8,7 +8,7 @@ use crate::var_builder::VarBuilder;
 use anyhow::Error;
 use candle_core::{Device, Module, Tensor};
 use candle_nn::Embedding;
-use decoder::{Decoder, Token};
+use decoder::Decoder;
 use encoder::{Encoder, EncoderConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -16,6 +16,8 @@ use tracing::{Level, event};
 
 mod decoder;
 mod encoder;
+
+pub use decoder::Token;
 
 const EMBEDDING_DIM: usize = 560;
 
@@ -188,16 +190,20 @@ impl SenseVoiceSmall {
         })
     }
 
-    pub fn transpose(&mut self, waveform: &mut [f32]) -> Res<Vec<Token>> {
+    pub fn segment(&mut self, waveform: &mut [f32]) -> Res<Vec<Segment>> {
         let waveform = match &self.resampler {
             None => waveform,
             Some(sampler) => &mut sampler.apply_resample(&waveform)?,
         };
 
-        let segments = self.vad.process(&waveform);
+        self.vad.push(waveform);
 
+        Ok(self.vad.segment())
+    }
+
+    pub fn transpose(&mut self, segments: &mut [Segment]) -> Res<Vec<Token>> {
         let mut out = Vec::with_capacity(segments.len());
-        for mut seg in segments {
+        for seg in segments {
             let text = self.process(&mut seg.data)?;
             out.push(Token {
                 text,
@@ -208,6 +214,21 @@ impl SenseVoiceSmall {
 
         Ok(out)
     }
+
+    pub fn transpose_vad_cache(&mut self) -> Res<Vec<Token>> {
+        let segment = self.vad.samples();
+        let mut out = Vec::with_capacity(1);
+        if let Some(mut seg) = segment {
+            let text = self.process(&mut seg.data)?;
+            out.push(Token {
+                text,
+                start: seg.start,
+                end: seg.end,
+            });
+        }
+        Ok(out)
+    }
+
     fn process(&mut self, waveform: &mut [f32]) -> Res<String> {
         let mut text = String::with_capacity(1024);
         let features = self.frontend(waveform)?;
