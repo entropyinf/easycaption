@@ -139,11 +139,8 @@ impl MultiHeadedAttentionSANM {
 
         let q_h = q_h.broadcast_mul(&scale_tensor)?;
 
-        let mut k_h = k_h.transpose(2, 3)?;
-
-        if k_h.device().is_metal() {
-            k_h = k_h.contiguous()?;
-        }
+        let k_h = k_h.transpose(2, 3)?;
+        let k_h = k_h.contiguous()?;
 
         let scores = q_h.matmul(&k_h)?;
 

@@ -15,8 +15,8 @@ async fn main() -> Res<()> {
         .compact()
         .init();
 
-    transpose_stream().await?;
-    // transpose_file().await?;
+    // transpose_stream().await?;
+    transpose_file().await?;
 
     Ok(())
 }
@@ -29,7 +29,7 @@ async fn transpose_file() -> Res<()> {
         model_dir: PathBuf::from("/Users/entropy/.cache/modelscope/hub/models/"),
         vad: VadConfig::default(),
         resample: Some((sample_rate, 16000)),
-        use_gpu: false,
+        use_gpu: true,
     };
 
     let mut model = SenseVoiceSmall::with_config(cfg).await?;

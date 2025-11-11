@@ -112,7 +112,7 @@ export default function FileStatusItem({ file, modelDir }: FileStatusItemProps) 
     };
 
     return (
-        <div className="px-3 py-2 flex justify-between rounded-md bg-gray-50 hover:bg-gray-100 transition-colors duration-200 w-full">
+        <div className="px-3 py-2 flex justify-between rounded-md bg-gray-50 hover:bg-gray-100 transition-colors duration-200 w-full items-center">
             <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
                     <span className="font-medium text-gray-900 truncate text-sm">{file.name}</span>

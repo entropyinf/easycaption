@@ -93,7 +93,7 @@ impl SenseVoiceSmall {
     pub async fn check_required_files<P: Into<PathBuf>>(model_dir: P) -> bool {
         let files = Self::get_required_files(model_dir).await;
         match files {
-            Ok(files) => files.iter().all(|file| !file.existed),
+            Ok(files) => files.iter().all(|file| file.existed),
             Err(e) => {
                 event!(Level::ERROR, "Failed to get required files: {}", e);
                 false

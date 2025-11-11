@@ -27,7 +27,7 @@ impl Downloads {
     }
 
     pub async fn download(&self, model_dir: String, file_name: String) -> Res<()> {
-        let handle = tokio::spawn(download(model_dir.clone(), file_name.clone()));
+        let handle = tokio::spawn(download(model_dir, file_name.clone()));
         self.downloads.write().await.insert(file_name, handle);
         Ok(())
     }

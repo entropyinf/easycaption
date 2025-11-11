@@ -1,4 +1,3 @@
-use std::mem;
 use crate::config::ConfigSync;
 use crate::notify::Notifier;
 use anyhow::bail;
@@ -8,11 +7,14 @@ use enthalpy::sense_voice_small::{SenseVoiceSmall, SenseVoiceSmallConfig, Token}
 use enthalpy::{ConfigRefresher, Res};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::env::home_dir;
+use std::mem;
 use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::{OnceCell, RwLock};
+use tokio::time::MissedTickBehavior;
 use tokio::{select, time};
 use tracing::event;
 
@@ -48,7 +50,8 @@ impl TransposeService {
     }
 
     pub async fn new(app_handle: AppHandle) -> Res<Self> {
-        let model_dir = PathBuf::from("/Users/entropy/.cache/modelscope/hub/models");
+        let home_dir = home_dir().unwrap_or(PathBuf::from("."));
+        let model_dir = home_dir.join(".cache/modelscope/hub/models");
 
         let config = TransposeConfig {
             enable: false,
@@ -138,7 +141,6 @@ impl Transpose {
 
     async fn transpose(&mut self, pcm: &mut [f32]) -> Res<()> {
         if self.model.is_none() {
-            event!(tracing::Level::DEBUG, "Model is none");
             return Ok(());
         }
         let model = self.model.as_mut().unwrap();
@@ -152,7 +154,6 @@ impl Transpose {
 
     async fn transpose_vad_cache(&mut self) -> Res<()> {
         if self.model.is_none() {
-            event!(tracing::Level::DEBUG, "Model is none");
             return Ok(());
         }
         let model = self.model.as_mut().unwrap();
@@ -166,6 +167,10 @@ impl Transpose {
     }
 
     fn emit_tokens(&mut self, tokens: Vec<Token>) {
+        if !tokens.is_empty() {
+            self.realtime_interval.reset();
+        }
+
         for token in tokens {
             event!(tracing::Level::DEBUG, "Token: {}", token.text);
 
@@ -233,11 +238,12 @@ impl Transpose {
 
         match (old.realtime, new.realtime) {
             (true, false) => {
-                let mut interval= time::interval(Duration::from_hours(999999));
+                let mut interval = time::interval(Duration::from_hours(999999));
                 mem::swap(&mut self.realtime_interval, &mut interval);
             }
             (_, true) => {
-                let mut interval= time::interval(Duration::from_millis(new.realtime_rate));
+                let mut interval = time::interval(Duration::from_millis(new.realtime_rate));
+                interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
                 mem::swap(&mut self.realtime_interval, &mut interval);
             }
             _ => {}
@@ -249,11 +255,9 @@ impl Transpose {
 
         match (&mut self.model, should_reload) {
             (None, _) | (Some(_), true) => {
-                let failed =
-                    SenseVoiceSmall::check_required_files(&new.model_config.model_dir).await;
+                let ok = SenseVoiceSmall::check_required_files(&new.model_config.model_dir).await;
 
-                if failed {
-                    self.notifier.error("Missing required files");
+                if !ok {
                     bail!("Missing required files");
                 }
 
@@ -264,8 +268,7 @@ impl Transpose {
                         self.model.replace(new_model);
                     }
                     Err(e) => {
-                        event!(tracing::Level::ERROR, "Error loading model {}", e);
-                        self.notifier.error(&format!("Error loading model {}", e));
+                        bail!("Error loading model {}", e);
                     }
                 }
             }
