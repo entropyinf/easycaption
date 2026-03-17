@@ -1,6 +1,7 @@
 # EasyCaption
 
-EasyCaption is a real-time speech-to-text desktop application designed for macOS. It captures system audio in real-time and converts it to text subtitles displayed on screen.
+EasyCaption is a real-time speech-to-text desktop application. 
+It captures system audio in real-time and converts it to text subtitles displayed on screen.
 
 ## Features
 
@@ -9,6 +10,9 @@ EasyCaption is a real-time speech-to-text desktop application designed for macOS
 - Real-time subtitle display: Shows recognized text as an overlay
 - Lightweight design: Built with Tauri for minimal resource usage
 - Multi-language support: Supports speech recognition in multiple languages
+
+## Example
+<img src="./images/img.png" width="640" height="440" />
 
 ## Tech Stack
 
@@ -36,10 +40,10 @@ This project uses a Rust + Tauri architecture, divided into three main parts:
 
 ```bash
 # Development mode
-pnpm tauri dev
+cargo tauri dev
 
 # Production build
-pnpm tauri build
+cargo tauri build
 ```
 
 ## License
